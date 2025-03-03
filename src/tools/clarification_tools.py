@@ -4,8 +4,12 @@ Clarification tools for the Cookbook Agent.
 This module contains tools used for clarifying requirements and gathering more information from users.
 """
 
+import logging
 from typing import Dict, List
 from openai.types.chat.chat_completion_tool_param import ChatCompletionToolParam
+
+# Get a logger for this module
+logger = logging.getLogger(__name__)
 
 
 def get_clarifications_tool() -> ChatCompletionToolParam:
@@ -18,7 +22,7 @@ def get_clarifications_tool() -> ChatCompletionToolParam:
     Returns:
         A ChatCompletionToolParam for get_clarifications
     """
-    print("Creating get_clarifications tool definition")
+    logger.debug("Creating get_clarifications tool definition")
     tool_definition: ChatCompletionToolParam = {
         "type": "function",
         "function": {
@@ -37,7 +41,9 @@ def get_clarifications_tool() -> ChatCompletionToolParam:
             },
         },
     }
-    print("Created tool definition", tool_definition)
+    logger.debug(
+        f"Created tool definition with name: {tool_definition['function']['name']}"
+    )
     return tool_definition
 
 
@@ -51,20 +57,24 @@ def get_clarifications(questions: List[str]) -> Dict[str, str]:
     Returns:
         Dictionary of questions and answers
     """
-    print("Getting clarifications from user")
-    print(f"Number of clarification questions: {len(questions)}")
+    logger.info("Getting clarifications from user")
+    logger.debug(f"Number of clarification questions: {len(questions)}")
     print("\nI need some clarifications to better understand your requirements:")
     clarifications = {}
 
-    print(f"Received {len(questions)} questions to clarify.")
+    logger.info(f"Processing {len(questions)} clarification questions")
     for i, question in enumerate(questions, 1):
-        print(f"Asking clarification question {i}/{len(questions)}: {question}")
+        logger.debug(f"Asking clarification question {i}/{len(questions)}: {question}")
         print(f"\n----------------------------------")
         print(f"Question: {question}")
         answer = input("Your answer: ").strip()
-        print(f"Received answer: {answer}")
+        logger.debug(
+            f"Received answer for question {i}: {answer[:30]}..."
+            if len(answer) > 30
+            else f"Received answer for question {i}: {answer}"
+        )
         clarifications[question] = answer
 
-    print("Clarification gathering complete")
-    print("Collected clarifications", clarifications)
+    logger.info("Clarification gathering complete")
+    logger.debug(f"Collected {len(clarifications)} clarifications")
     return clarifications
