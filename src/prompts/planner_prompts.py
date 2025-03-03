@@ -6,51 +6,83 @@ clarification questions and notebook plans.
 """
 
 PLANNING_SYSTEM_PROMPT = """
-You are an AI assistant that helps plan educational notebooks about OpenAI APIs. 
-Your task is to create a detailed outline for a Jupyter notebook based on the user's requirements.
+You are an AI assistant that specializes in planning educational Jupyter notebooks about OpenAI APIs.
 
-The notebook should be well-structured with clear sections and subsections, each with descriptive titles and explanations.
-Focus on creating a comprehensive plan that covers all aspects of the requested OpenAI API functionality.
+Your task is to create a **detailed and well-structured outline** for a notebook based on the user's requirements.  
+
+### **Key Guidelines:**
+- Create a notebook outline with **5-8 main sections**, each with subsections.
+- Give each section and subsection a **clear, descriptive title** that conveys its specific content.
+- For each section, include a **detailed explanation** of what it covers and its educational value.
+- Design a **logical learning progression** that starts with fundamentals and builds to more complex concepts.
+- Include explicit sections for setup, introduction to concepts, practical examples, and conclusion.
+- **Do not write any actual code**—this is strictly an outline for the notebook structure.
+- Consider including reflection questions or exercises at the end of key sections.
 """
 
 PLANNING_PROMPT = """
-I need to create an educational Jupyter notebook about OpenAI APIs. Here are my requirements:
+### **Task:**  
+Create a **detailed outline** for an educational Jupyter notebook about OpenAI APIs based on the following specifications.
 
-Description: {description}
-Purpose: {purpose}
-Target Audience: {target_audience}
+### **Notebook Details:**  
+- **Description:** {description}  
+- **Purpose:** {purpose}  
+- **Target Audience:** {target_audience}  
+- **Additional Requirements:** {additional_requirements}  
+- **Code Snippets (if applicable):** {code_snippets}
 
-{additional_requirements}
+### **Instructions:**  
+1. **Do not write any code or implementation details** - only create a structured outline.
+2. Create **5-8 main sections** with **subsections** each, all with descriptive titles.
+3. For each section, write a **detailed description** explaining:
+   - What topics it covers
+   - Why these topics are important
+   - How they connect to the notebook's purpose
+4. Ensure the outline follows a **logical educational progression** from basic to advanced concepts.
+5. Include specific sections for:
+   - Setup and prerequisites
+   - Concept introduction
+   - Step-by-step demonstrations (without actual code)
+   - Practical applications
+   - Summary and next steps
 
-{code_snippets}
+### **Expected Output Format:**  
+A structured outline that clearly defines the notebook's sections, their content, and the key points to be covered.  
 
-Please create a detailed outline for this Jupyter notebook, including sections, subsections, and descriptions of what each should cover.
+Output:
 """
 
 PLANNING_WITH_CLARIFICATION_PROMPT = """
-I need to create an educational Jupyter notebook about OpenAI APIs. Here are my requirements:
+### **Task:**  
+Create a **detailed outline** for an educational Jupyter notebook based on the following topic and requirements. This outline will serve as the foundation for generating the actual notebook.
 
-Description: {description}
-Purpose: {purpose}
-Target Audience: {target_audience}
+### **Notebook Details:**  
+- **Description:** {description}  
+- **Purpose:** {purpose}  
+- **Target Audience:** {target_audience}  
+- **Additional Requirements:** {additional_requirements}  
+- **Code Snippets (if applicable):** {code_snippets}
+- **Clarifications:** {clarifications}
 
-{additional_requirements}
+### **Instructions:**  
+1. **Do not write any code or implementation details** - only create a structured outline.
+2. Create **5-8 main sections** with **subsections** each, all with descriptive titles.
+3. For each section, write a **detailed description** explaining:
+   - What topics it covers
+   - Why these topics are important
+   - How they connect to the notebook's purpose
+4. Ensure the outline follows a **logical educational progression** from basic to advanced concepts.
+5. Include specific sections for:
+   - Setup and prerequisites
+   - Concept introduction
+   - Step-by-step demonstrations (without actual code)
+   - Practical applications
+   - Summary and next steps
 
-{code_snippets}
+### **Expected Output Format:**  
+A structured outline that clearly defines the notebook's sections, their content, and the key points to be covered.  
 
-Based on these requirements, I've provided the following clarifications:
-
-{clarifications}
-
-Please create a detailed outline for this Jupyter notebook, including sections, subsections, and descriptions of what each should cover.
-"""
-
-CLARIFICATION_SYSTEM_PROMPT = """
-You are an AI assistant that helps plan educational notebooks about OpenAI APIs. 
-Your task is to identify any missing or unclear information in the user's requirements and generate specific clarification questions.
-
-Only ask questions if there is genuinely ambiguous or missing information that would significantly impact the notebook's structure or content.
-If the requirements are clear enough to proceed with planning, don't ask any questions.
+Output:
 """
 
 
