@@ -120,6 +120,24 @@ def main():
             logger.info("Logging test complete")
             sys.exit(0)
 
+        # ---------------------------------------------------------------------
+        # UPDATED CODE: More comprehensive reduction of external library logging
+        # Reduce logging for external libraries to WARNING or higher:
+        logging.getLogger("httpcore").setLevel(logging.WARNING)
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+        logging.getLogger("urllib3").setLevel(logging.WARNING)
+        logging.getLogger("openai").setLevel(logging.WARNING)
+        logging.getLogger("requests").setLevel(logging.WARNING)
+
+        # Silence other noisy libraries
+        for logger_name in logging.root.manager.loggerDict:
+            if any(
+                name in logger_name.lower()
+                for name in ["http", "urllib", "requests", "openai", "aiohttp"]
+            ):
+                logging.getLogger(logger_name).setLevel(logging.WARNING)
+        # ---------------------------------------------------------------------
+
     except KeyError:
         # Fall back to INFO level if invalid level provided
         setup_logging(level=DebugLevel.INFO)
