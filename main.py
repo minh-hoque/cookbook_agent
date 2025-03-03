@@ -10,29 +10,8 @@ from typing import Dict, List, Any
 from src.user_input import UserInputHandler
 from src.planner import PlannerLLM
 from src.models import NotebookPlanModel
-
-
-def get_interactive_clarifications(questions: List[str]) -> Dict[str, str]:
-    """
-    Interactive callback function to get answers to clarification questions.
-
-    Args:
-        questions: List of clarification questions
-
-    Returns:
-        Dictionary of questions and answers
-    """
-    print("\nI need some clarifications to better understand your requirements:")
-    clarifications = {}
-
-    print(f"Received {len(questions)} questions to clarify.")
-    for question in questions:
-        print(f"\n----------------------------------")
-        print(f"Question: {question}")
-        answer = input("Your answer: ").strip()
-        clarifications[question] = answer
-
-    return clarifications
+from src.tools.clarification_tools import get_clarifications
+from src.tools.debug import info, debug, error, set_level, DebugLevel
 
 
 def format_notebook_plan(plan: NotebookPlanModel) -> str:
@@ -45,6 +24,7 @@ def format_notebook_plan(plan: NotebookPlanModel) -> str:
     Returns:
         A markdown string representation of the plan
     """
+    debug("Formatting notebook plan")
     result = f"# {plan.title}\n\n"
     result += f"**Description:** {plan.description}\n\n"
     result += f"**Purpose:** {plan.purpose}\n\n"
@@ -65,42 +45,77 @@ def format_notebook_plan(plan: NotebookPlanModel) -> str:
                         result += f"##### {sub_subsection.title}\n\n"
                         result += f"{sub_subsection.description}\n\n"
 
+    debug("Notebook plan formatting complete")
     return result
 
 
 def main():
     """Main entry point for the AI Agent application."""
+    info("Starting OpenAI Demo Notebook Generator")
+
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="OpenAI Demo Notebook Generator")
+    parser.add_argument(
+        "--debug",
+        choices=["OFF", "ERROR", "WARNING", "INFO", "DEBUG", "TRACE"],
+        help="Set debug level",
+        default="OFF",
+    )
+    args = parser.parse_args()
+
+    # Set debug level if specified
+    if args.debug:
+        set_level(args.debug)
+        info(f"Debug level set to {args.debug}")
+
     print("Welcome to the OpenAI Demo Notebook Generator!")
     print(
         "This tool will help you create Python notebooks showcasing OpenAI API capabilities."
     )
 
     # Initialize the user input handler
+    debug("Initializing UserInputHandler")
     input_handler = UserInputHandler()
 
     # Collect user requirements
+    info("Collecting user requirements")
     user_requirements = input_handler.collect_requirements()
+    debug("User requirements collected", user_requirements)
 
     # Initialize the planner LLM
+    debug("Initializing PlannerLLM")
     planner = PlannerLLM()
 
     # Plan the notebook with interactive clarifications
-    notebook_plan = planner.plan_notebook(
-        user_requirements, clarification_callback=get_interactive_clarifications
-    )
+    info("Planning notebook with clarifications")
+    try:
+        notebook_plan = planner.plan_notebook(
+            user_requirements, clarification_callback=get_clarifications
+        )
+        debug("Notebook plan created successfully")
+    except Exception as e:
+        error(f"Error planning notebook: {str(e)}")
+        sys.exit(1)
 
     # Format and display the notebook plan
     formatted_plan = format_notebook_plan(notebook_plan)
+    info("Notebook plan formatted")
     print("\nNotebook Plan:")
     print(formatted_plan)
 
     # Save the plan to a file
-    with open("notebook_plan.md", "w") as f:
-        f.write(formatted_plan)
+    debug("Saving notebook plan to file")
+    try:
+        with open("notebook_plan.md", "w") as f:
+            f.write(formatted_plan)
+        info("Notebook plan saved to notebook_plan.md")
+    except Exception as e:
+        error(f"Error saving notebook plan: {str(e)}")
 
     print("\nNotebook plan saved to notebook_plan.md")
 
     # TODO: Pass the plan to the Writer LLM
+    info("Notebook planning complete")
     print(
         "\nNext steps would be to generate the notebook content using the Writer LLM."
     )

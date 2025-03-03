@@ -9,8 +9,6 @@ from typing import Dict, List, Any
 from src.planner import PlannerLLM
 from src.models import NotebookPlanModel
 from src.tools.clarification_tools import get_clarifications
-from src.tools.debug import info, set_level
-import argparse
 
 
 def format_notebook_plan(plan: NotebookPlanModel) -> str:
@@ -84,24 +82,6 @@ def test_get_clarifications(questions: List[str]) -> Dict[str, str]:
 
 
 def main():
-    """Main entry point for the AI Agent application."""
-    info("Starting OpenAI Demo Notebook Generator")
-
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description="OpenAI Demo Notebook Generator")
-    parser.add_argument(
-        "--debug",
-        choices=["OFF", "ERROR", "WARNING", "INFO", "DEBUG", "TRACE"],
-        help="Set debug level",
-        default="OFF",
-    )
-    args = parser.parse_args()
-
-    # Set debug level if specified
-    if args.debug:
-        set_level(args.debug)
-        info(f"Debug level set to {args.debug}")
-
     """Test entry point with hardcoded input values."""
     print("Welcome to the TEST OpenAI Demo Notebook Generator!")
     print("This test will run with predefined inputs.")
