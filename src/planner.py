@@ -18,11 +18,8 @@ from openai.types.chat.chat_completion_tool_param import ChatCompletionToolParam
 
 # Use absolute imports for proper package imports when running from root
 from src.models import (
-    ClarificationQuestions,
     NotebookPlanModel,
     Section,
-    SubSection,
-    SubSubSection,
 )
 from src.prompts.planner_prompts import (
     PLANNING_SYSTEM_PROMPT,
@@ -31,6 +28,7 @@ from src.prompts.planner_prompts import (
     format_additional_requirements,
     format_code_snippets,
     format_clarifications,
+    format_search_results,
 )
 from src.tools.clarification_tools import get_clarifications_tool
 from src.tools.utils import extract_tool_arguments, has_tool_call
@@ -42,7 +40,7 @@ logger = logging.getLogger(__name__)
 try:
     from dotenv import load_dotenv
 
-    load_dotenv()
+    load_dotenv(override=True)
 except ImportError:
     # If dotenv is not installed, just print a warning
     print("Warning: python-dotenv not installed. Using environment variables directly.")
@@ -84,41 +82,54 @@ class PlannerLLM:
         self,
         requirements: Dict[str, Any],
         clarification_callback: Optional[Callable[[List[str]], Dict[str, str]]] = None,
+        search_results: Optional[str] = None,
     ) -> NotebookPlanModel:
         """
-        Plan a notebook based on user requirements.
-
-        If clarification questions are needed, it will use the provided callback
-        to get answers from the user.
+        Plan a notebook based on the given requirements.
 
         Args:
-            requirements: User requirements for the notebook
-            clarification_callback: Optional callback function to get answers to clarification questions
+            requirements: A dictionary containing the notebook requirements.
+            clarification_callback: A callback function to get clarifications from the user.
+            search_results: Optional string containing search results about the notebook topic.
 
         Returns:
-            A NotebookPlanModel object
+            A NotebookPlanModel containing the notebook plan.
         """
         logger.info("Starting plan_notebook method")
         logger.info(f"Received requirements: {requirements}")
         logger.info(f"Has clarification callback: {clarification_callback is not None}")
+        logger.info(f"Has search results: {search_results is not None}")
 
-        # Format the initial prompt for planning
-        formatted_prompt = PLANNING_PROMPT.format(
-            description=requirements.get("notebook_description", "Not provided"),
-            purpose=requirements.get("notebook_purpose", "Not provided"),
-            target_audience=requirements.get("target_audience", "Not provided"),
-            additional_requirements=format_additional_requirements(
-                requirements.get("additional_requirements", [])
-            ),
-            code_snippets=format_code_snippets(requirements.get("code_snippets", [])),
-        )
+        # Extract requirements
+        description = requirements.get("notebook_description", "Not provided")
+        purpose = requirements.get("notebook_purpose", "Not provided")
+        target_audience = requirements.get("target_audience", "Not provided")
+        code_snippets = requirements.get("code_snippets", [])
+        additional_reqs = requirements.get("additional_requirements", [])
+
+        # Format the requirements for the prompt
+        additional_requirements = format_additional_requirements(additional_reqs)
+        formatted_code_snippets = format_code_snippets(code_snippets)
+        formatted_search_results = "No search results available"
+        if search_results:
+            formatted_search_results = search_results
 
         # Start with the initial formatted prompt
         system_prompt = PLANNING_SYSTEM_PROMPT
         messages: List[ChatCompletionMessageParam] = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": formatted_prompt},
         ]
+
+        # Add the user prompt with or without search results
+        user_prompt = PLANNING_PROMPT.format(
+            description=description,
+            purpose=purpose,
+            target_audience=target_audience,
+            additional_requirements=additional_requirements,
+            code_snippets=formatted_code_snippets,
+            search_results=formatted_search_results,
+        )
+        messages.append({"role": "user", "content": user_prompt})
 
         # Store all clarifications gathered during the process
         all_clarifications = {}
@@ -142,6 +153,7 @@ class PlannerLLM:
                     model=self.model,
                     messages=messages,
                     tools=self.tools,
+                    stream=False,  # Ensure we're not using streaming to avoid the choices attribute error
                 )
 
                 message = response.choices[0].message
@@ -151,121 +163,89 @@ class PlannerLLM:
                 has_clarification_call = has_tool_call(message, "get_clarifications")
                 logger.info(f"Has clarification tool call: {has_clarification_call}")
 
-                if has_clarification_call:
-                    # Only proceed if we have a callback for clarifications
-                    if not clarification_callback:
+                if (
+                    has_clarification_call
+                    and message.tool_calls
+                    and clarification_callback
+                ):
+                    # Since we only have one tool, we can simplify by directly accessing the first tool call
+                    tool_call = message.tool_calls[0]
+                    args = extract_tool_arguments(tool_call)
+                    questions = args.get("questions", [])
+                    logger.info(f"Extracted {len(questions)} questions from tool call")
+
+                    if questions:
+                        # Get answers from user via the callback
                         logger.info(
-                            "No clarification callback provided, skipping clarification"
+                            f"Asking user {len(questions)} clarification questions"
                         )
-                        break
+                        clarification_answers = clarification_callback(questions)
 
-                    # Process each tool call
-                    if (
-                        message.tool_calls
-                    ):  # Ensure tool_calls is not None before iterating
-                        logger.info(f"Found {len(message.tool_calls)} tool calls")
-                        for tool_call in message.tool_calls:
-                            logger.info(
-                                f"Processing tool call: {tool_call.function.name}"
+                        # Add to our accumulated clarifications
+                        all_clarifications.update(clarification_answers)
+                        logger.info(f"Updated all_clarifications with new answers")
+
+                        # Add this interaction to the message history
+                        messages.append(
+                            {
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": [
+                                    {
+                                        "id": tool_call.id,
+                                        "type": "function",
+                                        "function": {
+                                            "name": tool_call.function.name,
+                                            "arguments": tool_call.function.arguments,
+                                        },
+                                    }
+                                ],
+                            }
+                        )
+
+                        # Add the tool response to the message history
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tool_call.id,
+                                "content": json.dumps(clarification_answers),
+                            }
+                        )
+
+                        # Create a new prompt with the clarifications
+                        clarification_prompt = (
+                            PLANNING_WITH_CLARIFICATION_PROMPT.format(
+                                description=description,
+                                purpose=purpose,
+                                target_audience=target_audience,
+                                additional_requirements=additional_requirements,
+                                code_snippets=formatted_code_snippets,
+                                clarifications=format_clarifications(
+                                    all_clarifications
+                                ),
+                                search_results=formatted_search_results,
                             )
-                            if tool_call.function.name == "get_clarifications":
-                                args = extract_tool_arguments(tool_call)
-                                questions = args.get("questions", [])
-                                logger.info(
-                                    f"Extracted {len(questions)} questions from tool call"
-                                )
+                        )
 
-                                if questions:
-                                    # Get answers from user via the callback
-                                    logger.info(
-                                        "Calling clarification callback with questions..."
-                                    )
-                                    new_clarifications = clarification_callback(
-                                        questions
-                                    )
-                                    logger.info(
-                                        f"Received {len(new_clarifications)} answers from callback"
-                                    )
-
-                                    # Add to our accumulated clarifications
-                                    all_clarifications.update(new_clarifications)
-                                    logger.info(
-                                        f"Updated all_clarifications with new answers"
-                                    )
-
-                                    # Add this interaction to the message history
-                                    messages.append(
-                                        {
-                                            "role": "assistant",
-                                            "content": None,
-                                            "tool_calls": [
-                                                {
-                                                    "id": tool_call.id,
-                                                    "type": "function",
-                                                    "function": {
-                                                        "name": tool_call.function.name,
-                                                        "arguments": tool_call.function.arguments,
-                                                    },
-                                                }
-                                            ],
-                                        }
-                                    )
-
-                                    # Add the tool response to the message history
-                                    messages.append(
-                                        {
-                                            "role": "tool",
-                                            "tool_call_id": tool_call.id,
-                                            "content": json.dumps(new_clarifications),
-                                        }
-                                    )
-                                    logger.info(
-                                        "Added tool call and response to message history"
-                                    )
-
-                                    # Continue the conversation with a new prompt that includes clarifications
-                                    formatted_prompt_with_clarifications = PLANNING_WITH_CLARIFICATION_PROMPT.format(
-                                        description=requirements.get(
-                                            "notebook_description", "Not provided"
-                                        ),
-                                        purpose=requirements.get(
-                                            "notebook_purpose", "Not provided"
-                                        ),
-                                        target_audience=requirements.get(
-                                            "target_audience", "Not provided"
-                                        ),
-                                        additional_requirements=format_additional_requirements(
-                                            requirements.get(
-                                                "additional_requirements", []
-                                            )
-                                        ),
-                                        code_snippets=format_code_snippets(
-                                            requirements.get("code_snippets", [])
-                                        ),
-                                        clarifications=format_clarifications(
-                                            all_clarifications
-                                        ),
-                                    )
-
-                                    # Add this new prompt to continue the conversation
-                                    messages.append(
-                                        {
-                                            "role": "user",
-                                            "content": formatted_prompt_with_clarifications,
-                                        }
-                                    )
-                                    logger.info(
-                                        "Added clarification-enhanced prompt to message history"
-                                    )
-                                else:
-                                    logger.info(
-                                        "No questions found in tool call, ending clarification rounds"
-                                    )
-                                    continue_clarifying = False
+                        # Add this new prompt to continue the conversation
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": clarification_prompt,
+                            }
+                        )
+                        logger.info(
+                            "Added clarification-enhanced prompt to message history"
+                        )
+                    else:
+                        logger.info(
+                            "No questions found in tool call, ending clarification rounds"
+                        )
+                        continue_clarifying = False
                 else:
-                    # No more clarification questions, proceed to final plan generation
+                    # No more clarification questions or no callback, proceed to final plan generation
                     logger.info(
-                        "No clarification tool call detected, proceeding to plan generation"
+                        "No clarification needed, proceeding to plan generation"
                     )
                     continue_clarifying = False
 

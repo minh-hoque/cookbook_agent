@@ -163,11 +163,58 @@ def main():
     logger.debug("Initializing PlannerLLM")
     planner = PlannerLLM()
 
+    # Search for information about the notebook topic
+    logger.info("Searching for information about the notebook topic")
+    formatted_search_results = None
+    notebook_description = user_requirements.get("notebook_description", "")
+
+    if notebook_description:
+        try:
+            from src.searcher import search_topic, format_search_results
+
+            print(f"\nSearching for information about: {notebook_description}")
+            search_results = search_topic(notebook_description)
+
+            if "error" in search_results:
+                logger.warning(f"Search error: {search_results['error']}")
+                print(f"Search warning: {search_results['error']}")
+            else:
+                result_count = len(search_results.get("results", []))
+                formatted_search_results = format_search_results(search_results)
+                print(f"Found {result_count} search results")
+
+                # Log a preview of the search results
+                if formatted_search_results:
+                    preview = (
+                        formatted_search_results[:200] + "..."
+                        if len(formatted_search_results) > 200
+                        else formatted_search_results
+                    )
+                    logger.debug(f"Search results preview: {preview}")
+
+        except ImportError:
+            logger.warning(
+                "Tavily search module not available. Install with: pip install tavily-python"
+            )
+            print(
+                "Search functionality not available. Continuing without search results."
+            )
+        except Exception as e:
+            logger.error(f"Error during search: {str(e)}")
+            print(f"Error searching for information: {str(e)}")
+    else:
+        logger.info("No notebook description provided for search")
+        print(
+            "No notebook description provided for search. Continuing without search results."
+        )
+
     # Plan the notebook with interactive clarifications
     logger.info("Planning notebook with clarifications")
     try:
         notebook_plan = planner.plan_notebook(
-            user_requirements, clarification_callback=get_clarifications
+            user_requirements,
+            clarification_callback=get_clarifications,
+            search_results=formatted_search_results,
         )
         logger.debug("Notebook plan created successfully")
     except Exception as e:
