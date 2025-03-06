@@ -5,10 +5,16 @@ This file has hardcoded inputs for testing purposes.
 """
 
 import sys
+import os
+import logging
 from typing import Dict, List, Any
 from src.planner import PlannerLLM
 from src.models import NotebookPlanModel
 from src.tools.clarification_tools import get_clarifications
+from src.tools.debug import DebugLevel, setup_logging
+
+# Get a logger for this module
+logger = logging.getLogger(__name__)
 
 
 def format_notebook_plan(plan: NotebookPlanModel) -> str:
@@ -21,6 +27,7 @@ def format_notebook_plan(plan: NotebookPlanModel) -> str:
     Returns:
         A markdown string representation of the plan
     """
+    logger.debug("Formatting notebook plan")
     result = f"# {plan.title}\n\n"
     result += f"**Description:** {plan.description}\n\n"
     result += f"**Purpose:** {plan.purpose}\n\n"
@@ -41,6 +48,7 @@ def format_notebook_plan(plan: NotebookPlanModel) -> str:
                         result += f"##### {sub_subsection.title}\n\n"
                         result += f"{sub_subsection.description}\n\n"
 
+    logger.debug("Notebook plan formatting complete")
     return result
 
 
@@ -55,6 +63,7 @@ def test_get_clarifications(questions: List[str]) -> Dict[str, str]:
     Returns:
         Dictionary of questions and pre-defined answers
     """
+    logger.info(f"Processing {len(questions)} test clarification questions")
     print("\n=== TEST CLARIFICATIONS ===")
     print(f"Received {len(questions)} questions to clarify.")
 
@@ -76,13 +85,19 @@ def test_get_clarifications(questions: List[str]) -> Dict[str, str]:
         )
         print(f"Answer: {answer}")
         clarifications[question] = answer
+        logger.debug(f"Test clarification - Q: {question} A: {answer}")
 
     print("=== END TEST CLARIFICATIONS ===\n")
+    logger.info("Test clarifications completed")
     return clarifications
 
 
 def main():
     """Test entry point with hardcoded input values."""
+    # Set up logging
+    setup_logging(level=DebugLevel.INFO)
+
+    logger.info("Starting TEST OpenAI Demo Notebook Generator")
     print("Welcome to the TEST OpenAI Demo Notebook Generator!")
     print("This test will run with predefined inputs.")
 
@@ -137,26 +152,70 @@ print(completion.choices[0].message.content)
         ],
     }
 
+    # Search for information about the notebook topic
+    logger.info("Searching for information about the notebook topic")
+    formatted_search_results = None
+    notebook_description = user_requirements.get("notebook_description", "")
+
+    if notebook_description:
+        try:
+            from src.searcher import search_topic, format_search_results
+
+            print(f"\nSearching for information about: {notebook_description}")
+            logger.debug(f"Searching for topic: {notebook_description}")
+            search_results = search_topic(notebook_description)
+
+            if "error" in search_results:
+                logger.warning(f"Search error: {search_results['error']}")
+                print(f"Search warning: {search_results['error']}")
+            else:
+                result_count = len(search_results.get("results", []))
+                formatted_search_results = format_search_results(search_results)
+                logger.info(f"Found {result_count} search results")
+                print(f"Found {result_count} search results")
+
+                # Log a preview of the search results
+                if formatted_search_results:
+                    preview = (
+                        formatted_search_results[:200] + "..."
+                        if len(formatted_search_results) > 200
+                        else formatted_search_results
+                    )
+                    logger.debug(f"Search results preview: {preview}")
+        except ImportError as e:
+            logger.error(f"Failed to import search modules: {str(e)}")
+            print(f"Search functionality not available: {str(e)}")
+        except Exception as e:
+            logger.error(f"Error during search: {str(e)}")
+            print(f"Error during search: {str(e)}")
+
     # Initialize the planner LLM
+    logger.info("Initializing the planner...")
     print("Initializing the planner...")
     planner = PlannerLLM()
 
     # Plan the notebook with our test clarifications function
+    logger.info("Planning the notebook...")
     print("Planning the notebook...")
     notebook_plan = planner.plan_notebook(
-        user_requirements, clarification_callback=get_clarifications
+        user_requirements,
+        clarification_callback=test_get_clarifications,
+        search_results=formatted_search_results,
     )
 
     # Format and display the notebook plan
+    logger.info("Formatting notebook plan")
     formatted_plan = format_notebook_plan(notebook_plan)
     print("\nTest Notebook Plan:")
     print(formatted_plan)
 
     # Save the plan to a test file
     output_file = "test_notebook_plan.md"
+    logger.info(f"Saving notebook plan to {output_file}")
     with open(output_file, "w") as f:
         f.write(formatted_plan)
 
+    logger.info(f"Test notebook plan saved to {output_file}")
     print(f"\nTest notebook plan saved to {output_file}")
 
 
