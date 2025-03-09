@@ -5,6 +5,13 @@ This module contains the prompt templates used by the Planner LLM to generate
 clarification questions and notebook plans.
 """
 
+from src.prompts.prompt_helpers import (
+    format_additional_requirements,
+    format_code_snippets,
+    format_clarifications,
+    format_search_results,
+)
+
 PLANNING_SYSTEM_PROMPT = """
 You are an AI assistant that specializes in planning educational Jupyter notebooks about OpenAI APIs.
 
@@ -95,61 +102,3 @@ A structured outline that clearly defines the notebook's sections, their content
 
 Output:
 """
-
-
-def format_additional_requirements(requirements):
-    """Format additional requirements for the prompt."""
-    if not requirements:
-        return "None specified"
-
-    formatted = ""
-
-    # Handle both list and dict inputs
-    if isinstance(requirements, list):
-        for req in requirements:
-            formatted += f"- {req}\n"
-    elif isinstance(requirements, dict):
-        for key, value in requirements.items():
-            if key not in [
-                "description",
-                "purpose",
-                "target_audience",
-                "code_snippets",
-            ]:
-                formatted += f"- {key}: {value}\n"
-    else:
-        formatted = f"- {str(requirements)}\n"
-
-    return formatted.strip() or "None specified"
-
-
-def format_code_snippets(snippets):
-    """Format code snippets for the prompt."""
-    if not snippets:
-        return "None provided"
-
-    formatted = ""
-    for i, snippet in enumerate(snippets, 1):
-        formatted += f"Snippet {i}:\n```python\n{snippet}\n```\n\n"
-
-    return formatted.strip() or "None provided"
-
-
-def format_clarifications(clarifications):
-    """Format clarifications for the prompt."""
-    if not clarifications:
-        return "No clarifications provided"
-
-    formatted = ""
-    for question, answer in clarifications.items():
-        formatted += f"Q: {question}\nA: {answer}\n\n"
-
-    return formatted.strip() or "No clarifications provided"
-
-
-def format_search_results(search_results):
-    """Format search results for the prompt."""
-    if not search_results:
-        return "No search results available"
-
-    return search_results.strip() or "No search results available"
