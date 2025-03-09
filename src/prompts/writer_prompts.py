@@ -15,147 +15,135 @@ from src.prompts.prompt_helpers import (
 WRITER_SYSTEM_PROMPT = """
 You are an AI assistant that specializes in writing educational Jupyter notebooks about OpenAI APIs.
 
-Your task is to generate high-quality, instructive content for a specific section of a Jupyter notebook based on the provided outline.
+Your goal is to generate high-quality, instructive content for a specific section of a Jupyter notebook, following a given outline.
 
-### **Key Guidelines:**
-- Write clear, concise, and educational content that follows the section outline exactly.
-- Include both markdown explanatory text and Python code cells.
-- Ensure code examples are complete, correct, and follow best practices for OpenAI API usage.
-- Add detailed comments in code to explain each step.
-- Include proper error handling and API key management in code examples.
-- Reference official OpenAI documentation where appropriate.
-- Maintain a tutorial-like tone that guides the reader through concepts and implementation.
-- Focus on creating practical, runnable examples that demonstrate the concepts effectively.
-- Ensure all code is properly formatted for Jupyter notebook cells.
+### **Guidelines for Generating Content:**
+#### **1. Structure the Notebook Section Properly**
+- **Use markdown cells** for explanations, instructions, and conceptual overviews.
+- **Use code cells** for Python implementations, demonstrations, and examples.
+- **Generate as many cells as needed** to cover the section and its subsections fully.
+
+#### **2. Write Clear and Educational Content**
+- **Ensure explanations are concise, accurate, and easy to understand.**
+- **Introduce key concepts before showing code** to help readers understand the implementation.
+- **Use a tutorial-style tone**, guiding the reader step by step.
+
+#### **3. Ensure High-Quality Code**
+- **Provide complete and correct code examples** that follow OpenAI API best practices.
+- **Include detailed inline comments** in the code to explain each step.
+- **Use proper error handling** to manage API requests effectively.
+- **Ensure secure API key management** (e.g., using environment variables instead of hardcoding keys).
+
+#### **4. Maintain Consistency and Formatting**
+- **Follow the provided section outline exactly.**  
+- **Ensure consistency** with previously generated content, if available.
+- **Format all content properly** for Jupyter notebook cells.
+
+#### **5. Reference Official Documentation When Needed**
+- **Include links to relevant OpenAI documentation** to help users find more details.
 """
 
 WRITER_CONTENT_PROMPT = """
-### **Task:**  
+### Task
 Generate the content for a section of a Jupyter notebook about OpenAI APIs.
 
-### **Notebook Information:**
+### Notebook Information
 - **Title:** {notebook_title}
 - **Description:** {notebook_description}
 - **Purpose:** {notebook_purpose}
 - **Target Audience:** {notebook_target_audience}
 
-### **Previously Generated Content:**
+### Previously Generated Content
 {previous_content}
 
-### **Section to Generate:**
+### Section to Generate
 - **Section Title:** {section_title}
 - **Section Description:** {section_description}
 
-### **Subsections to Include:**
+### Subsections to Include
 {subsections_details}
 
-### **Additional Requirements:**
+### Additional Requirements
 {additional_requirements}
 
-### **Search Results:**
+### Search Results
 {search_results}
 
-### **Instructions:**
-1. Generate both markdown text and Python code cells for this section.
-2. Follow the section description and subsection details precisely.
-3. Include clear explanations of concepts before introducing code.
-4. Ensure all code examples are complete, correct, and follow OpenAI API best practices.
-5. Add detailed comments in code to explain what each part does.
-6. Include proper error handling and API key management.
-7. Format the output as a series of Jupyter notebook cells, clearly indicating which are markdown and which are code.
-8. Reference official OpenAI documentation where appropriate.
-9. Maintain consistency with previously generated content if provided.
+
+### Instructions for Generating the Section
+1. **Start with a Markdown Cell:**
+   - Clearly introduce the section.
+   - Explain the topic and why it is important.
+   - Provide context based on the section description.
+
+2. **Break the Section into Logical Parts:**
+   - Follow the subsection details precisely.
+   - For each subsection, start with an explanation (markdown) before writing any code.
+
+3. **Generate Python Code Cells for Implementation:**
+   - Write well-structured, fully functional code examples.
+   - Include inline comments explaining each step.
+   - Ensure the code is correct and follows OpenAI API best practices.
+   - Handle API errors gracefully and ensure API key security.
+
+4. **Generate as Many Cells as Needed:**
+   - Use multiple markdown and code cells to cover all key points.
+   - Ensure smooth transitions between explanations and code.
+
+5. **Ensure Readability and Consistency:**
+   - Keep explanations clear and beginner-friendly if applicable.
+   - Maintain consistency with previously generated content.
+   - Format content properly for Jupyter notebook cells.
+
+6. **Reference Official OpenAI Documentation:**
+   - If relevant, include links to official documentation.
 
 ### **Output Format:**
-For each cell in the notebook section, use the following format:
+For each cell in the notebook section, use the following JSON format:
 
-```markdown
-# Your markdown content here
-```
-
-```python
-# Your Python code here
+```json
+[
+    {
+        "cell_type": "markdown",
+        "content": "Your markdown content here"
+    },
+    {
+        "cell_type": "code",
+        "content": "Your Python code here"
+    },
+    {
+        "cell_type": "code",
+        "content": "Your Python code here"
+    }
+]
 ```
 
 Output:
 """
 
-WRITER_SUBSECTION_PROMPT = """
-### **Task:**  
-Generate the content for a specific subsection of a Jupyter notebook about OpenAI APIs.
-
-### **Notebook Information:**
-- **Title:** {notebook_title}
-- **Description:** {notebook_description}
-- **Purpose:** {notebook_purpose}
-- **Target Audience:** {notebook_target_audience}
-
-### **Section Context:**
-- **Parent Section Title:** {parent_section_title}
-- **Parent Section Description:** {parent_section_description}
-
-### **Subsection to Generate:**
-- **Subsection Title:** {subsection_title}
-- **Subsection Description:** {subsection_description}
-
-### **Additional Requirements:**
-{additional_requirements}
-
-### **Search Results:**
-{search_results}
-
-### **Previously Generated Content:**
-{previous_content}
-
-### **Instructions:**
-1. Generate both markdown text and Python code cells for this subsection.
-2. Follow the subsection description precisely.
-3. Include clear explanations of concepts before introducing code.
-4. Ensure all code examples are complete, correct, and follow OpenAI API best practices.
-5. Add detailed comments in code to explain what each part does.
-6. Include proper error handling and API key management.
-7. Format the output as a series of Jupyter notebook cells, clearly indicating which are markdown and which are code.
-8. Reference official OpenAI documentation where appropriate.
-9. Maintain consistency with previously generated content if provided.
-
-### **Output Format:**
-For each cell in the notebook subsection, use the following format:
-
-```markdown
-# Your markdown content here
-```
-
-```python
-# Your Python code here
-```
-
-Output:
-"""
 
 WRITER_REVISION_PROMPT = """
-### **Task:**  
+### Task
 Revise the content for a section of a Jupyter notebook about OpenAI APIs based on the evaluation feedback.
 
-### **Notebook Information:**
+### Notebook Information
 - **Title:** {notebook_title}
 - **Description:** {notebook_description}
 - **Purpose:** {notebook_purpose}
 - **Target Audience:** {notebook_target_audience}
 
-### **Section Information:**
+### Section Information
 - **Section Title:** {section_title}
 - **Section Description:** {section_description}
 
-### **Original Content:**
+### Original Content
 {original_content}
 
-### **Evaluation Feedback:**
+### Evaluation Feedback
 {evaluation_feedback}
 
-### **Revision Instructions:**
-{revision_instructions}
 
-### **Instructions:**
+### Instructions
 1. Revise the content based on the evaluation feedback.
 2. Maintain the same structure and format as the original content.
 3. Ensure all code examples are complete, correct, and follow best practices.
@@ -163,7 +151,7 @@ Revise the content for a section of a Jupyter notebook about OpenAI APIs based o
 5. Address all issues mentioned in the evaluation feedback.
 6. Implement the suggestions provided in the evaluation feedback.
 
-### **Output Format:**
+### Output Format
 For each cell in the notebook section, use the following format:
 
 ```markdown

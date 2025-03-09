@@ -35,7 +35,6 @@ from src.models import (
 from src.prompts.writer_prompts import (
     WRITER_SYSTEM_PROMPT,
     WRITER_CONTENT_PROMPT,
-    WRITER_SUBSECTION_PROMPT,
     WRITER_REVISION_PROMPT,
 )
 from src.prompts.critic_prompts import (
@@ -116,7 +115,7 @@ class WriterAgent:
         # Add nodes
         workflow.add_node("search", self._search_node)
         workflow.add_node("generate", self._generate_node)
-        workflow.add_node("evaluate", self._evaluate_node)
+        workflow.add_node("evaluate", self._critic_node)
         workflow.add_node("revise", self._revise_node)
 
         # Add edges
@@ -238,7 +237,7 @@ class WriterAgent:
 
         return state
 
-    def _evaluate_node(self, state: Dict[str, Any]) -> Dict[str, Any]:
+    def _critic_node(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """
         Evaluate the generated content.
 
@@ -325,7 +324,6 @@ class WriterAgent:
             section_description=section.description,
             original_content=formatted_content,
             evaluation_feedback=evaluation.rationale,
-            revision_instructions="Improve the content based on the evaluation feedback.",
         )
 
         # Generate the revised content
