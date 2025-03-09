@@ -17,7 +17,7 @@ from openai.types.chat.chat_completion_message_param import ChatCompletionMessag
 
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langchain_openai import ChatOpenAI
-from langgraph.graph import StateGraph, END
+from langgraph.graph import StateGraph, CompiledStateGraph, END
 from langgraph.prebuilt import ToolNode
 from langgraph.checkpoint import MemorySaver
 from langgraph.graph.message import add_messages
@@ -44,7 +44,6 @@ from src.prompts.critic_prompts import (
 from src.prompts.prompt_helpers import (
     format_subsections_details,
     format_additional_requirements,
-    format_search_results,
     format_previous_content,
 )
 from src.searcher import (
@@ -67,7 +66,7 @@ except ImportError:
 
 class WriterAgent:
     """
-    Writer Agent class for generating notebook content.
+    Agent for generating notebook content based on the plan created by the Planner LLM.
     """
 
     def __init__(self, model: str = "gpt-4o"):
@@ -75,23 +74,41 @@ class WriterAgent:
         Initialize the Writer Agent.
 
         Args:
-            model (str, optional): The OpenAI model to use. Defaults to "gpt-4o".
+            model (str, optional): The model to use for generating content. Defaults to "gpt-4o".
         """
+        logger.info(f"Initializing WriterAgent with model: {model}")
+
+        # Set the model
         self.model = model
-        self.client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-        self.llm = ChatOpenAI(model=model, temperature=0.7)
-        self.critic_llm = ChatOpenAI(model=model, temperature=0.2)
+
+        # Create the OpenAI client
+        try:
+            self.client = OpenAI()
+            logger.debug("OpenAI client initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize OpenAI client: {e}")
+            raise
+
+        # Create the critic LLM
+        try:
+            self.critic_llm = ChatOpenAI(model=model)
+            logger.debug("Critic LLM initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize Critic LLM: {e}")
+            raise
 
         # Create the workflow
         self.workflow = self._create_workflow()
+        logger.debug("Writer workflow created successfully")
 
-    def _create_workflow(self) -> StateGraph:
+    def _create_workflow(self) -> CompiledStateGraph:
         """
-        Create the langgraph workflow for the Writer Agent.
+        Create the workflow for generating notebook content.
 
         Returns:
-            StateGraph: The langgraph workflow.
+            StateGraph: The workflow graph.
         """
+        logger.debug("Creating writer workflow")
 
         # Define the state schema
         class State(dict):
@@ -115,31 +132,32 @@ class WriterAgent:
         # Add nodes
         workflow.add_node("search", self._search_node)
         workflow.add_node("generate", self._generate_node)
-        workflow.add_node("evaluate", self._critic_node)
+        workflow.add_node("critic", self._critic_node)
         workflow.add_node("revise", self._revise_node)
 
         # Add edges
         workflow.add_edge("search", "generate")
-        workflow.add_edge("generate", "evaluate")
+        workflow.add_edge("generate", "critic")
         workflow.add_conditional_edges(
-            "evaluate",
+            "critic",
             self._should_revise,
             {
                 True: "revise",
                 False: END,
             },
         )
-        workflow.add_edge("revise", "evaluate")
+        workflow.add_edge("revise", "critic")
 
         # Set the entry point
         workflow.set_entry_point("search")
 
         # Compile the workflow
+        logger.debug(f"Workflow created with nodes: {workflow.nodes}")
         return workflow.compile()
 
     def _search_node(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Search for information about the current section.
+        Search for information related to the current section.
 
         Args:
             state (Dict[str, Any]): The current state.
@@ -147,6 +165,10 @@ class WriterAgent:
         Returns:
             Dict[str, Any]: The updated state.
         """
+        logger.info(
+            f"Executing search node for section: {state['current_section'].title}"
+        )
+
         # Get the current section
         section = state["current_section"]
 
@@ -160,21 +182,34 @@ class WriterAgent:
             ),
         ]
 
-        # Get the search query
-        structured_llm = self.llm.with_structured_output(SearchQuery)
-        search_query = structured_llm.invoke(messages)
-
-        # Log the search query
-        logger.info(f"Search query: {search_query.search_query}")
-        logger.info(f"Justification: {search_query.justification}")
+        # Generate the search query
+        try:
+            structured_search = self.client.beta.chat.completions.parse(
+                model=self.model,
+                messages=messages,
+                response_format=SearchQuery,
+                temperature=0.7,
+            )
+            search_query = structured_search.choices[0].message.parsed
+            logger.info(f"Search query: {search_query.search_query}")
+            logger.info(f"Justification: {search_query.justification}")
+        except Exception as e:
+            logger.error(f"Failed to generate search query: {e}")
+            state["search_results"] = "Error generating search query"
+            return state
 
         # Search for information
-        search_results = search_topic(search_query.search_query)
-        formatted_results = format_search_results_from_searcher(search_results)
+        try:
+            search_results = search_topic(search_query.search_query)
+            formatted_results = format_search_results_from_searcher(search_results)
+            logger.debug(f"Search returned {len(search_results)} results")
+        except Exception as e:
+            logger.error(f"Failed to search for information: {e}")
+            formatted_results = "Error searching for information"
 
         # Update the state
         state["search_results"] = formatted_results
-
+        logger.debug("Search node completed successfully")
         return state
 
     def _generate_node(self, state: Dict[str, Any]) -> Dict[str, Any]:
@@ -187,6 +222,8 @@ class WriterAgent:
         Returns:
             Dict[str, Any]: The updated state.
         """
+        logger.info(f"Generating content for section: {state['current_section'].title}")
+
         # Get the current section and notebook plan
         section = state["current_section"]
         notebook_plan = state["notebook_plan"]
@@ -207,6 +244,9 @@ class WriterAgent:
             search_results=state.get("search_results", "No search results available"),
             previous_content=format_previous_content(previous_content),
         )
+        logger.debug(
+            f"Formatted content generation prompt with {len(prompt)} characters"
+        )
 
         # Generate the content
         messages = [
@@ -214,27 +254,38 @@ class WriterAgent:
             {"role": "user", "content": prompt},
         ]
 
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            temperature=0.7,
-        )
+        # Use structured output to get the notebook section content
+        try:
+            logger.debug("Calling OpenAI API to generate content")
+            response = self.client.beta.chat.completions.parse(
+                model=self.model,
+                messages=messages,
+                response_format=NotebookSectionContent,
+                temperature=0.7,
+            )
 
-        # Parse the generated content
-        content = response.choices[0].message.content
-
-        # Extract cells from the content
-        cells = self._extract_cells(content)
-
-        # Create the notebook section content
-        section_content = NotebookSectionContent(
-            section_title=section.title,
-            cells=cells,
-        )
+            # Get the parsed section content
+            section_content = response.choices[0].message.parsed
+            logger.info(f"Generated content with {len(section_content.cells)} cells")
+            logger.debug(
+                f"Content types: {[cell.cell_type for cell in section_content.cells]}"
+            )
+        except Exception as e:
+            logger.error(f"Failed to generate content: {e}")
+            # Create an empty section content as fallback
+            section_content = NotebookSectionContent(
+                section_title=section.title,
+                cells=[
+                    NotebookCell(
+                        cell_type="markdown",
+                        content=f"Error generating content for section: {section.title}",
+                    )
+                ],
+            )
 
         # Update the state
         state["generated_content"] = section_content
-
+        logger.debug("Generate node completed successfully")
         return state
 
     def _critic_node(self, state: Dict[str, Any]) -> Dict[str, Any]:
@@ -247,6 +298,8 @@ class WriterAgent:
         Returns:
             Dict[str, Any]: The updated state.
         """
+        logger.info(f"Evaluating content for section: {state['current_section'].title}")
+
         # Get the current section, notebook plan, and generated content
         section = state["current_section"]
         notebook_plan = state["notebook_plan"]
@@ -254,6 +307,9 @@ class WriterAgent:
 
         # Format the generated content for evaluation
         formatted_content = self._format_cells_for_evaluation(generated_content.cells)
+        logger.debug(
+            f"Formatted content for evaluation with {len(formatted_content)} characters"
+        )
 
         # Format the prompt
         prompt = CRITIC_EVALUATION_PROMPT.format(
@@ -277,22 +333,33 @@ class WriterAgent:
         ]
 
         # Get the evaluation
-        structured_critic = self.critic_llm.with_structured_output(CriticEvaluation)
-        evaluation = structured_critic.invoke(messages)
-
-        # Log the evaluation
-        logger.info(f"Evaluation: {evaluation.model_dump_json(indent=2)}")
+        try:
+            logger.debug("Calling Critic LLM to evaluate content")
+            structured_critic = self.critic_llm.with_structured_output(CriticEvaluation)
+            evaluation = structured_critic.invoke(messages)
+            logger.info(f"Evaluation: {evaluation}")
+        except Exception as e:
+            logger.error(f"Failed to evaluate content: {e}")
+            # Create a default evaluation as fallback
+            evaluation = CriticEvaluation(
+                rationale="Error evaluating content", pass_content=False
+            )
 
         # Update the state
         state["evaluation"] = evaluation
 
         # If the content passes evaluation, set it as the final content
         if evaluation.pass_content:
+            logger.info("Content passed evaluation")
             state["final_content"] = generated_content
         else:
             # Increment the retry counter
             state["current_retries"] = state.get("current_retries", 0) + 1
+            logger.info(
+                f"Content failed evaluation. Retry {state['current_retries']} of {state['max_retries']}"
+            )
 
+        logger.debug("Critic node completed successfully")
         return state
 
     def _revise_node(self, state: Dict[str, Any]) -> Dict[str, Any]:
@@ -305,6 +372,8 @@ class WriterAgent:
         Returns:
             Dict[str, Any]: The updated state.
         """
+        logger.info(f"Revising content for section: {state['current_section'].title}")
+
         # Get the current section, notebook plan, generated content, and evaluation
         section = state["current_section"]
         notebook_plan = state["notebook_plan"]
@@ -313,6 +382,9 @@ class WriterAgent:
 
         # Format the generated content for revision
         formatted_content = self._format_cells_for_evaluation(generated_content.cells)
+        logger.debug(
+            f"Formatted content for revision with {len(formatted_content)} characters"
+        )
 
         # Create the revision prompt
         revision_prompt = WRITER_REVISION_PROMPT.format(
@@ -332,27 +404,31 @@ class WriterAgent:
             {"role": "user", "content": revision_prompt},
         ]
 
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            temperature=0.7,
-        )
+        # Use structured output to get the revised notebook section content
+        try:
+            logger.debug("Calling OpenAI API to revise content")
+            response = self.client.beta.chat.completions.parse(
+                model=self.model,
+                messages=messages,
+                response_format=NotebookSectionContent,
+                temperature=0.7,
+            )
 
-        # Parse the revised content
-        content = response.choices[0].message.content
-
-        # Extract cells from the content
-        cells = self._extract_cells(content)
-
-        # Create the notebook section content
-        section_content = NotebookSectionContent(
-            section_title=section.title,
-            cells=cells,
-        )
+            # Get the parsed section content
+            section_content = response.choices[0].message.parsed
+            logger.info(f"Revised content with {len(section_content.cells)} cells")
+            logger.debug(
+                f"Revised content types: {[cell.cell_type for cell in section_content.cells]}"
+            )
+        except Exception as e:
+            logger.error(f"Failed to revise content: {e}")
+            # Keep the original content as fallback
+            section_content = generated_content
+            logger.warning("Using original content as fallback due to revision error")
 
         # Update the state
         state["generated_content"] = section_content
-
+        logger.debug("Revise node completed successfully")
         return state
 
     def _should_revise(self, state: Dict[str, Any]) -> bool:
@@ -365,15 +441,25 @@ class WriterAgent:
         Returns:
             bool: True if the content should be revised, False otherwise.
         """
+        # Check if the content passed evaluation
+        if state["evaluation"].pass_content:
+            logger.debug("Content passed evaluation, no revision needed")
+            return False
+
         # Check if we've reached the maximum number of retries
-        if state.get("current_retries", 0) >= state.get("max_retries", 3):
+        if state.get("current_retries", 0) >= state["max_retries"]:
             logger.warning(
-                f"Reached maximum number of retries ({state.get('max_retries', 3)}). Accepting content as is."
+                f"Maximum number of retries reached ({state['max_retries']}). "
+                f"Using the last generated content despite failing evaluation."
             )
+            # Set the final content to the last generated content
             state["final_content"] = state["generated_content"]
             return False
 
-        return not state["evaluation"].pass_content
+        logger.info(
+            f"Content needs revision. Retry {state.get('current_retries', 0)} of {state['max_retries']}"
+        )
+        return True
 
     def _extract_cells(self, content: str) -> List[NotebookCell]:
         """
@@ -385,6 +471,7 @@ class WriterAgent:
         Returns:
             List[NotebookCell]: The extracted cells.
         """
+        logger.debug(f"Extracting cells from content with {len(content)} characters")
         cells = []
 
         # Split the content by code blocks
@@ -441,6 +528,7 @@ class WriterAgent:
                 # Move to the next part
                 i += 1
 
+        logger.debug(f"Extracted {len(cells)} cells from content")
         return cells
 
     def _format_cells_for_evaluation(self, cells: List[NotebookCell]) -> str:
@@ -453,6 +541,8 @@ class WriterAgent:
         Returns:
             str: The formatted cells.
         """
+        logger.debug(f"Formatting {len(cells)} cells for evaluation")
+
         formatted = ""
 
         for cell in cells:
@@ -461,19 +551,24 @@ class WriterAgent:
             else:
                 formatted += f"```python\n{cell.content}\n```\n\n"
 
-        return formatted.strip()
+        formatted_content = formatted.strip()
+        logger.debug(
+            f"Formatted content for evaluation with {len(formatted_content)} characters"
+        )
+
+        return formatted_content
 
     def _summarize_section_content(
         self, section_content: NotebookSectionContent
     ) -> str:
         """
-        Summarize section content for use as context in subsequent sections.
+        Summarize the section content for logging.
 
         Args:
             section_content (NotebookSectionContent): The section content to summarize.
 
         Returns:
-            str: A summary of the section content.
+            str: The summary.
         """
         # Create a summary of the content
         summary = ""
@@ -494,18 +589,22 @@ class WriterAgent:
         max_retries: int = 3,
     ) -> NotebookSectionContent:
         """
-        Generate content for a section of the notebook.
+        Generate content for a specific section of the notebook.
 
         Args:
             notebook_plan (NotebookPlanModel): The notebook plan.
             section_index (int): The index of the section to generate content for.
-            additional_requirements (Optional[Dict[str, Any]], optional): Additional requirements. Defaults to None.
-            previous_content (Optional[Dict[str, str]], optional): Previously generated content. Defaults to None.
-            max_retries (int, optional): Maximum number of revision attempts. Defaults to 3.
+            additional_requirements (Optional[Dict[str, Any]], optional): Additional requirements for the content. Defaults to None.
+            previous_content (Optional[Dict[str, str]], optional): Content from previous sections. Defaults to None.
+            max_retries (int, optional): Maximum number of retries for content generation. Defaults to 3.
 
         Returns:
             NotebookSectionContent: The generated content.
         """
+        logger.info(
+            f"Generating content for section {section_index}: {notebook_plan.sections[section_index].title}"
+        )
+
         # Get the section
         section = notebook_plan.sections[section_index]
 
@@ -525,10 +624,30 @@ class WriterAgent:
         }
 
         # Run the workflow
-        result = self.workflow.invoke(state)
+        try:
+            logger.debug("Running writer workflow")
+            result = self.workflow.invoke(state)
+            logger.info(f"Workflow completed successfully for section {section_index}")
+        except Exception as e:
+            logger.error(f"Error running workflow for section {section_index}: {e}")
+            # Create an empty section content as fallback
+            return NotebookSectionContent(
+                section_title=section.title,
+                cells=[
+                    NotebookCell(
+                        cell_type="markdown",
+                        content=f"Error generating content for section: {section.title}",
+                    )
+                ],
+            )
 
         # Return the final content
-        return result["final_content"]
+        final_content = result["final_content"]
+        logger.info(
+            f"Generated content for section {section_index} with "
+            f"{len(final_content.cells)} cells"
+        )
+        return final_content
 
     def generate_content(
         self,
@@ -541,12 +660,15 @@ class WriterAgent:
 
         Args:
             notebook_plan (NotebookPlanModel): The notebook plan.
-            additional_requirements (Optional[Dict[str, Any]], optional): Additional requirements. Defaults to None.
-            max_retries (int, optional): Maximum number of revision attempts per section. Defaults to 3.
+            additional_requirements (Optional[Dict[str, Any]], optional): Additional requirements for the content. Defaults to None.
+            max_retries (int, optional): Maximum number of retries for content generation. Defaults to 3.
 
         Returns:
             List[NotebookSectionContent]: The generated content for all sections.
         """
+        logger.info(f"Generating content for notebook: {notebook_plan.title}")
+        logger.info(f"Notebook has {len(notebook_plan.sections)} sections")
+
         # Initialize the list of section contents
         section_contents = []
 
@@ -556,7 +678,7 @@ class WriterAgent:
         # Generate content for each section
         for i, section in enumerate(notebook_plan.sections):
             logger.info(
-                f"Generating content for section {i+1}/{len(notebook_plan.sections)}: {section.title}"
+                f"Generating content for section {i}/{len(notebook_plan.sections)}: {section.title}"
             )
 
             # Generate content for the section
@@ -576,8 +698,9 @@ class WriterAgent:
                 section_content
             )
 
-            logger.info(
-                f"Completed section {i+1}/{len(notebook_plan.sections)}: {section.title}"
-            )
+            logger.info(f"Completed section {i}/{len(notebook_plan.sections)}")
 
+        logger.info(
+            f"Content generation completed for all {len(notebook_plan.sections)} sections"
+        )
         return section_contents

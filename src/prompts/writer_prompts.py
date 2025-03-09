@@ -5,13 +5,6 @@ This module contains the prompt templates used by the Writer LLM to generate
 notebook content based on the plan created by the Planner LLM.
 """
 
-from src.prompts.prompt_helpers import (
-    format_subsections_details,
-    format_additional_requirements,
-    format_search_results,
-    format_previous_content,
-)
-
 WRITER_SYSTEM_PROMPT = """
 You are an AI assistant that specializes in writing educational Jupyter notebooks about OpenAI APIs.
 

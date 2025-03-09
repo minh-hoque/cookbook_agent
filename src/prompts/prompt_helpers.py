@@ -70,22 +70,6 @@ def format_additional_requirements(requirements):
     return formatted.strip() or "None specified"
 
 
-def format_search_results(search_results):
-    """
-    Format search results for the prompt.
-
-    Args:
-        search_results: Search results to format.
-
-    Returns:
-        str: Formatted search results.
-    """
-    if not search_results:
-        return "No search results available"
-
-    return search_results.strip() or "No search results available"
-
-
 def format_previous_content(previous_content):
     """
     Format previously generated content for the prompt.
