@@ -41,6 +41,10 @@ for logger_name in logging.root.manager.loggerDict:
         logging.getLogger(logger_name).setLevel(logging.WARNING)
 # ---------------------------------------------------------------------
 
+# Import format_utils functions at the top level
+from src.format.format_utils import notebook_content_to_markdown, save_markdown_to_file
+from src.models import NotebookSectionContent
+
 
 def parse_markdown_to_plan(markdown_file: str) -> Dict[str, Any]:
     """
@@ -283,6 +287,33 @@ def save_notebook_content(content_list: List[Dict[str, Any]], output_dir: str) -
 
         logger.info(f"Saved section {i+1} to {filepath}")
 
+    # Also save a single markdown file with all content
+    try:
+        # Convert the dictionary list to NotebookSectionContent objects
+        section_objects = [
+            NotebookSectionContent(**section) for section in content_list
+        ]
+
+        # Generate markdown from all sections
+        markdown_content = notebook_content_to_markdown(section_objects)
+
+        # Create a descriptive filename using the first section's title
+        if content_list and "section_title" in content_list[0]:
+            first_title = (
+                content_list[0]["section_title"].replace(" ", "_").replace(":", "")
+            )
+            markdown_filename = f"notebook_{first_title}.md"
+        else:
+            markdown_filename = "full_notebook.md"
+
+        # Save the markdown to a file
+        markdown_filepath = os.path.join(output_dir, markdown_filename)
+        save_markdown_to_file(markdown_content, markdown_filepath)
+
+        logger.info(f"Saved complete notebook as markdown to {markdown_filepath}")
+    except Exception as e:
+        logger.error(f"Error saving markdown version: {e}")
+
 
 def main():
     """
@@ -292,7 +323,7 @@ def main():
     parser.add_argument(
         "--plan",
         type=str,
-        default="./data/test_notebook_plan.md",
+        default="./data/test_writer_notebook_plan.md",
         help="Path to the markdown plan file",
     )
     parser.add_argument(

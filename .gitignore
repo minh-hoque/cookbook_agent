@@ -185,3 +185,6 @@ env/
 
 # Windows
 Thumbs.db
+
+# Output
+output/

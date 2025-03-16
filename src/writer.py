@@ -524,7 +524,7 @@ class WriterAgent:
             NotebookSectionContent: The generated content.
         """
         logger.info(
-            f"Generating content for section {section_index}: {notebook_plan.sections[section_index].title}"
+            f"Generating content for section {section_index + 1}: {notebook_plan.sections[section_index].title}"
         )
 
         # Get the section
@@ -550,10 +550,11 @@ class WriterAgent:
             logger.debug("Running writer workflow")
             compiled_workflow = self.workflow.compile()
             result = compiled_workflow.invoke(state)
-            print("result", result)
-            logger.info(f"Workflow completed successfully for section {section_index}")
+            logger.info(
+                f"Workflow completed successfully for section {section_index + 1}"
+            )
         except Exception as e:
-            logger.error(f"Error running workflow for section {section_index}: {e}")
+            logger.error(f"Error running workflow for section {section_index + 1}: {e}")
             # Create an empty section content as fallback
             return NotebookSectionContent(
                 section_title=section.title,
@@ -568,7 +569,7 @@ class WriterAgent:
         # Return the final content
         if "final_content" not in result or result["final_content"] is None:
             logger.error(
-                f"Final content is missing or None for section {section_index}. Using fallback content."
+                f"Final content is missing or None for section {section_index + 1}. Using fallback content."
             )
             # Try to use the generated_content if available
             if (
@@ -590,10 +591,10 @@ class WriterAgent:
                 )
 
         final_content = result["final_content"]
-        print("final_content", final_content)
+        # print("final_content", final_content)
 
         logger.info(
-            f"Generated content for section {section_index} with "
+            f"Generated content for section {section_index + 1} with "
             f"{len(final_content.cells)} cells"
         )
         return final_content
@@ -627,7 +628,7 @@ class WriterAgent:
         # Generate content for each section
         for i, section in enumerate(notebook_plan.sections):
             logger.info(
-                f"Generating content for section {i}/{len(notebook_plan.sections)}: {section.title}"
+                f"Generating content for section {i + 1}/{len(notebook_plan.sections)}: {section.title}"
             )
 
             # Generate content for the section
@@ -645,7 +646,7 @@ class WriterAgent:
             # Add the full section content to the previous content dictionary
             previous_content[section.title] = section_content
 
-            logger.info(f"Completed section {i}/{len(notebook_plan.sections)}")
+            logger.info(f"Completed section {i + 1}/{len(notebook_plan.sections)}")
 
         logger.info(
             f"Content generation completed for all {len(notebook_plan.sections)} sections"
