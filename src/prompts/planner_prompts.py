@@ -5,13 +5,6 @@ This module contains the prompt templates used by the Planner LLM to generate
 clarification questions and notebook plans.
 """
 
-from src.prompts.prompt_helpers import (
-    format_additional_requirements,
-    format_code_snippets,
-    format_clarifications,
-    format_search_results,
-)
-
 PLANNING_SYSTEM_PROMPT = """
 You are an AI assistant that specializes in planning educational Jupyter notebooks about OpenAI APIs.
 

@@ -17,9 +17,8 @@ from openai.types.chat.chat_completion_message_param import ChatCompletionMessag
 
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langchain_openai import ChatOpenAI
-from langgraph.graph import StateGraph, CompiledStateGraph, END
+from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
-from langgraph.checkpoint import MemorySaver
 from langgraph.graph.message import add_messages
 
 # Use absolute imports for proper package imports when running from root
@@ -101,7 +100,7 @@ class WriterAgent:
         self.workflow = self._create_workflow()
         logger.debug("Writer workflow created successfully")
 
-    def _create_workflow(self) -> CompiledStateGraph:
+    def _create_workflow(self) -> StateGraph:
         """
         Create the workflow for generating notebook content.
 
@@ -153,7 +152,7 @@ class WriterAgent:
 
         # Compile the workflow
         logger.debug(f"Workflow created with nodes: {workflow.nodes}")
-        return workflow.compile()
+        return workflow
 
     def _search_node(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -174,12 +173,14 @@ class WriterAgent:
 
         # Create a search query
         messages = [
-            SystemMessage(
-                content="You are an AI assistant that helps create search queries for finding information about OpenAI API topics."
-            ),
-            HumanMessage(
-                content=f"Create a search query to find information about the following OpenAI API topic: {section.title}. The section description is: {section.description}"
-            ),
+            {
+                "role": "system",
+                "content": "You are an AI assistant that helps create search queries for finding information about OpenAI API topics.",
+            },
+            {
+                "role": "user",
+                "content": f"Create a search query to find information about the following OpenAI API topic: {section.title}. The section description is: {section.description}",
+            },
         ]
 
         # Generate the search query
@@ -188,7 +189,7 @@ class WriterAgent:
                 model=self.model,
                 messages=messages,
                 response_format=SearchQuery,
-                temperature=0.7,
+                temperature=0.1,
             )
             search_query = structured_search.choices[0].message.parsed
             logger.info(f"Search query: {search_query.search_query}")
@@ -261,15 +262,18 @@ class WriterAgent:
                 model=self.model,
                 messages=messages,
                 response_format=NotebookSectionContent,
-                temperature=0.7,
+                temperature=0.5,
             )
 
             # Get the parsed section content
             section_content = response.choices[0].message.parsed
-            logger.info(f"Generated content with {len(section_content.cells)} cells")
-            logger.debug(
-                f"Content types: {[cell.cell_type for cell in section_content.cells]}"
-            )
+            if section_content and hasattr(section_content, "cells"):
+                logger.info(
+                    f"Generated content with {len(section_content.cells)} cells"
+                )
+                logger.debug(
+                    f"Content types: {[cell.cell_type for cell in section_content.cells]}"
+                )
         except Exception as e:
             logger.error(f"Failed to generate content: {e}")
             # Create an empty section content as fallback
@@ -328,29 +332,42 @@ class WriterAgent:
 
         # Evaluate the content
         messages = [
-            SystemMessage(content=CRITIC_SYSTEM_PROMPT),
-            HumanMessage(content=prompt),
+            {"role": "system", "content": CRITIC_SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
         ]
 
         # Get the evaluation
         try:
             logger.debug("Calling Critic LLM to evaluate content")
-            structured_critic = self.critic_llm.with_structured_output(CriticEvaluation)
-            evaluation = structured_critic.invoke(messages)
+            response = self.client.beta.chat.completions.parse(
+                model=self.model,
+                messages=messages,
+                response_format=CriticEvaluation,
+                temperature=0,
+            )
+            evaluation = response.choices[0].message.parsed
             logger.info(f"Evaluation: {evaluation}")
         except Exception as e:
             logger.error(f"Failed to evaluate content: {e}")
             # Create a default evaluation as fallback
             evaluation = CriticEvaluation(
-                rationale="Error evaluating content", pass_content=False
+                rationale="Error evaluating content", passed=False
             )
 
-        # Update the state
+        # Update the state with evaluation
         state["evaluation"] = evaluation
 
         # If the content passes evaluation, set it as the final content
-        if evaluation.pass_content:
+        if evaluation and evaluation.passed:
             logger.info("Content passed evaluation")
+            state["final_content"] = generated_content
+        # Check if this attempt would reach the maximum retries (after incrementing)
+        elif state.get("current_retries", 0) + 1 >= state["max_retries"]:
+            logger.warning(
+                f"Maximum number of retries reached. "
+                f"Using the last generated content despite failing evaluation."
+            )
+            state["current_retries"] = state["max_retries"]
             state["final_content"] = generated_content
         else:
             # Increment the retry counter
@@ -411,15 +428,16 @@ class WriterAgent:
                 model=self.model,
                 messages=messages,
                 response_format=NotebookSectionContent,
-                temperature=0.7,
+                temperature=0.3,
             )
 
             # Get the parsed section content
             section_content = response.choices[0].message.parsed
-            logger.info(f"Revised content with {len(section_content.cells)} cells")
-            logger.debug(
-                f"Revised content types: {[cell.cell_type for cell in section_content.cells]}"
-            )
+            if section_content and hasattr(section_content, "cells"):
+                logger.info(f"Revised content with {len(section_content.cells)} cells")
+                logger.debug(
+                    f"Revised content types: {[cell.cell_type for cell in section_content.cells]}"
+                )
         except Exception as e:
             logger.error(f"Failed to revise content: {e}")
             # Keep the original content as fallback
@@ -433,7 +451,7 @@ class WriterAgent:
 
     def _should_revise(self, state: Dict[str, Any]) -> bool:
         """
-        Determine if the content should be revised.
+        Determine whether to revise the content based on the evaluation.
 
         Args:
             state (Dict[str, Any]): The current state.
@@ -442,7 +460,7 @@ class WriterAgent:
             bool: True if the content should be revised, False otherwise.
         """
         # Check if the content passed evaluation
-        if state["evaluation"].pass_content:
+        if state["evaluation"] and state["evaluation"].passed:
             logger.debug("Content passed evaluation, no revision needed")
             return False
 
@@ -452,84 +470,10 @@ class WriterAgent:
                 f"Maximum number of retries reached ({state['max_retries']}). "
                 f"Using the last generated content despite failing evaluation."
             )
-            # Set the final content to the last generated content
-            state["final_content"] = state["generated_content"]
             return False
 
-        logger.info(
-            f"Content needs revision. Retry {state.get('current_retries', 0)} of {state['max_retries']}"
-        )
+        # If we're here, we should revise the content
         return True
-
-    def _extract_cells(self, content: str) -> List[NotebookCell]:
-        """
-        Extract cells from the generated content.
-
-        Args:
-            content (str): The generated content.
-
-        Returns:
-            List[NotebookCell]: The extracted cells.
-        """
-        logger.debug(f"Extracting cells from content with {len(content)} characters")
-        cells = []
-
-        # Split the content by code blocks
-        parts = content.split("```")
-
-        # Skip the first part if it's empty
-        start_index = 1 if parts[0].strip() == "" else 0
-
-        # Process each part
-        i = start_index
-        while i < len(parts):
-            # Check if this is a code block
-            if i % 2 == start_index:
-                # This is a code block header
-                block_type = parts[i].strip().lower()
-
-                # Check if the next part exists
-                if i + 1 < len(parts):
-                    # This is the code block content
-                    block_content = parts[i + 1].strip()
-
-                    # Determine the cell type
-                    if block_type == "markdown":
-                        cell_type = "markdown"
-                    elif block_type.startswith("python"):
-                        cell_type = "code"
-                    else:
-                        # Default to code for other types
-                        cell_type = "code"
-
-                    # Create the cell
-                    cell = NotebookCell(
-                        cell_type=cell_type,
-                        content=block_content,
-                    )
-
-                    # Add the cell to the list
-                    cells.append(cell)
-
-                    # Skip the next part
-                    i += 2
-                else:
-                    # No more parts
-                    break
-            else:
-                # This is not a code block header, treat it as markdown
-                if parts[i].strip():
-                    cell = NotebookCell(
-                        cell_type="markdown",
-                        content=parts[i].strip(),
-                    )
-                    cells.append(cell)
-
-                # Move to the next part
-                i += 1
-
-        logger.debug(f"Extracted {len(cells)} cells from content")
-        return cells
 
     def _format_cells_for_evaluation(self, cells: List[NotebookCell]) -> str:
         """
@@ -557,28 +501,6 @@ class WriterAgent:
         )
 
         return formatted_content
-
-    def _summarize_section_content(
-        self, section_content: NotebookSectionContent
-    ) -> str:
-        """
-        Summarize the section content for logging.
-
-        Args:
-            section_content (NotebookSectionContent): The section content to summarize.
-
-        Returns:
-            str: The summary.
-        """
-        # Create a summary of the content
-        summary = ""
-
-        # Add code cells to the summary
-        for cell in section_content.cells:
-            if cell.cell_type == "code":
-                summary += f"Code snippet: {cell.content[:200]}...\n\n"
-
-        return summary
 
     def generate_section_content(
         self,
@@ -626,7 +548,9 @@ class WriterAgent:
         # Run the workflow
         try:
             logger.debug("Running writer workflow")
-            result = self.workflow.invoke(state)
+            compiled_workflow = self.workflow.compile()
+            result = compiled_workflow.invoke(state)
+            print("result", result)
             logger.info(f"Workflow completed successfully for section {section_index}")
         except Exception as e:
             logger.error(f"Error running workflow for section {section_index}: {e}")
@@ -642,7 +566,32 @@ class WriterAgent:
             )
 
         # Return the final content
+        if "final_content" not in result or result["final_content"] is None:
+            logger.error(
+                f"Final content is missing or None for section {section_index}. Using fallback content."
+            )
+            # Try to use the generated_content if available
+            if (
+                "generated_content" in result
+                and result["generated_content"] is not None
+            ):
+                logger.info("Using generated_content as fallback")
+                return result["generated_content"]
+            else:
+                # Create an empty section content as fallback
+                return NotebookSectionContent(
+                    section_title=section.title,
+                    cells=[
+                        NotebookCell(
+                            cell_type="markdown",
+                            content=f"Error generating content for section: {section.title}. The content generation process did not produce a valid result.",
+                        )
+                    ],
+                )
+
         final_content = result["final_content"]
+        print("final_content", final_content)
+
         logger.info(
             f"Generated content for section {section_index} with "
             f"{len(final_content.cells)} cells"
@@ -693,10 +642,8 @@ class WriterAgent:
             # Add the section content to the list
             section_contents.append(section_content)
 
-            # Add the section content to the previous content dictionary
-            previous_content[section.title] = self._summarize_section_content(
-                section_content
-            )
+            # Add the full section content to the previous content dictionary
+            previous_content[section.title] = section_content
 
             logger.info(f"Completed section {i}/{len(notebook_plan.sections)}")
 

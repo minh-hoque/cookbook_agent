@@ -25,11 +25,14 @@ from src.prompts.planner_prompts import (
     PLANNING_SYSTEM_PROMPT,
     PLANNING_PROMPT,
     PLANNING_WITH_CLARIFICATION_PROMPT,
+)
+
+from src.prompts.prompt_helpers import (
     format_additional_requirements,
     format_code_snippets,
     format_clarifications,
-    format_search_results,
 )
+
 from src.tools.clarification_tools import get_clarifications_tool
 from src.tools.utils import extract_tool_arguments, has_tool_call
 

@@ -82,7 +82,6 @@ class CriticEvaluation(BaseModel):
     rationale: str = Field(
         description="Clear and specific reasons supporting the pass or fail decision following the evaluation criteria, including actionable suggestions for improvement if necessary."
     )
-    pass_content: bool = Field(
+    passed: bool = Field(
         description="Whether the content is acceptable as is or requires revision. True if the content is acceptable as is, false if it requires revision.",
-        alias="pass",
     )

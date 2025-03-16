@@ -99,18 +99,18 @@ For each cell in the notebook section, use the following JSON format:
 
 ```json
 [
-    {
+    {{
         "cell_type": "markdown",
         "content": "Your markdown content here"
-    },
-    {
+    }},
+    {{
         "cell_type": "code",
         "content": "Your Python code here"
-    },
-    {
+    }},
+    {{
         "cell_type": "code",
         "content": "Your Python code here"
-    }
+    }}
 ]
 ```
 
@@ -175,18 +175,18 @@ For each cell in the notebook section, use the following JSON format:
 
 ```json
 [
-    {
+    {{
         "cell_type": "markdown",
         "content": "Your markdown content here"
-    },
-    {
+    }},
+    {{
         "cell_type": "code",
         "content": "Your Python code here"
-    },
-    {
+    }},
+    {{
         "cell_type": "code",
         "content": "Your Python code here"
-    }
+    }}
 ]
 ```
 
