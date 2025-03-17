@@ -30,7 +30,7 @@ CRITIC_SYSTEM_PROMPT = """You are an AI assistant responsible for evaluating edu
 5. **Constructive Suggestions for Improvement:**  
    - Highlight **both strengths and areas for enhancement**.  
    - If issues exist, offer **specific, actionable recommendations** on how to fix them.  
-   - Keep feedback professional, supportive, and focused on **improving the content rather than just pointing out flaws**.  
+   - Keep feedback professional, supportive, and focused on **improving the content rather than just pointing out flaws**.
 
 ---
 
@@ -84,10 +84,6 @@ Evaluate the content generated for a section of a Jupyter notebook about OpenAI 
 5. **Logical Structure & Flow:**  
    - Does the content follow a logical progression?  
    - Does it match the expected structure of the notebook section?  
-
-6. **Error Handling & Security:**  
-   - Does the code include proper error handling for API calls?  
-   - Are API keys and sensitive data managed securely?
 
 ---
 
