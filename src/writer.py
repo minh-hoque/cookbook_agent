@@ -548,7 +548,7 @@ class WriterAgent:
         # Run the workflow
         try:
             logger.debug("Running writer workflow")
-            compiled_workflow = self.workflow.compile()
+            compiled_workflow = self.workflow.compile(debug=False)
             result = compiled_workflow.invoke(state)
             logger.info(
                 f"Workflow completed successfully for section {section_index + 1}"

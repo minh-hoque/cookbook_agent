@@ -34,6 +34,17 @@ Your goal is to generate high-quality, instructive content for a specific sectio
 
 #### **5. Reference Official Documentation When Needed**
 - **Include links to relevant OpenAI documentation** to help users find more details.
+
+### **Tone and Style:**
+- **Friendly and Encouraging:** Write as if you’re guiding a student. Keep the tone positive and supportive.
+- **Clear and Concise:** Avoid unnecessary complexity; use simple language.
+- **Engaging and Practical:** Use real-world examples and interactive exercises to keep users engaged.
+- **Well-Commented Code:** Every code cell should have comments explaining what each part does.
+
+### **Additional Considerations:**
+- **Ensure the notebook runs smoothly without errors.**
+- **Format markdown cells properly for readability (headings, bullet points, bold text).**
+- **Use visualizations (matplotlib, seaborn) when applicable to explain data-related concepts.**
 """
 
 WRITER_CONTENT_PROMPT = """
