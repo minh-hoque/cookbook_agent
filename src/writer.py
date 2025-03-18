@@ -14,6 +14,12 @@ import openai
 from openai import OpenAI
 from openai.types.chat import ChatCompletion
 from openai.types.chat.chat_completion_message_param import ChatCompletionMessageParam
+from openai.types.chat.chat_completion_system_message_param import (
+    ChatCompletionSystemMessageParam,
+)
+from openai.types.chat.chat_completion_user_message_param import (
+    ChatCompletionUserMessageParam,
+)
 
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langchain_openai import ChatOpenAI
@@ -27,6 +33,8 @@ from src.models import (
     Section,
     SubSection,
     SearchQuery,
+    SearchQuestion,
+    MultipleSearchQuestions,
     NotebookSectionContent,
     NotebookCell,
     CriticEvaluation,
@@ -68,7 +76,7 @@ class WriterAgent:
     Agent for generating notebook content based on the plan created by the Planner LLM.
     """
 
-    def __init__(self, model: str = "gpt-4o"):
+    def __init__(self, model: str = "gpt-4.5-preview-2025-02-27"):
         """
         Initialize the Writer Agent.
 
@@ -158,6 +166,10 @@ class WriterAgent:
         """
         Search for information related to the current section.
 
+        This function first generates N specific questions about the topic,
+        then searches for answers to those questions, and finally concatenates
+        the results with their respective questions.
+
         Args:
             state (Dict[str, Any]): The current state.
 
@@ -171,47 +183,111 @@ class WriterAgent:
         # Get the current section
         section = state["current_section"]
 
-        # Create a search query
-        messages = [
-            {
-                "role": "system",
-                "content": "You are an AI assistant that helps create search queries for finding information about OpenAI API topics.",
-            },
-            {
-                "role": "user",
-                "content": f"Create a search query to find information about the following OpenAI API topic: {section.title}. The section description is: {section.description}",
-            },
+        # Number of questions to generate
+        num_questions = 3  # Can be adjusted as needed
+
+        # Step 1: Generate N specific questions about the topic
+        questions_prompt = [
+            ChatCompletionSystemMessageParam(
+                content="You are an AI assistant that helps create specific questions for finding information about OpenAI API topics.",
+                role="system",
+            ),
+            ChatCompletionUserMessageParam(
+                content=f"Create {num_questions} specific questions to find detailed information about the following OpenAI API topic: {section.title}. The section description is: {section.description}.\n\n{format_subsections_details(section.subsections)}\n\nGenerate questions that would help gather comprehensive information for creating educational content about this topic and its subsections.",
+                role="user",
+            ),
         ]
 
-        # Generate the search query
+        # Generate the questions
         try:
-            structured_search = self.client.beta.chat.completions.parse(
+            structured_questions = self.client.beta.chat.completions.parse(
                 model=self.model,
-                messages=messages,
-                response_format=SearchQuery,
-                temperature=0.1,
+                messages=questions_prompt,
+                response_format=MultipleSearchQuestions,
+                temperature=0.3,
             )
-            search_query = structured_search.choices[0].message.parsed
-            logger.info(f"Search query: {search_query.search_query}")
-            logger.info(f"Justification: {search_query.justification}")
+            search_questions = structured_questions.choices[0].message.parsed
+            if search_questions and search_questions.questions:
+                logger.info(f"Generated {len(search_questions.questions)} questions")
+                for i, q in enumerate(search_questions.questions):
+                    logger.info(f"Question {i+1}: {q.question}")
+                    logger.debug(f"Justification: {q.justification}")
+            else:
+                logger.error("Failed to generate valid search questions")
+                state["search_results"] = (
+                    "Error generating search questions: No valid questions generated"
+                )
+                return state
         except Exception as e:
-            logger.error(f"Failed to generate search query: {e}")
-            state["search_results"] = "Error generating search query"
+            logger.error(f"Failed to generate search questions: {e}")
+            state["search_results"] = "Error generating search questions"
             return state
 
-        # Search for information
-        try:
-            search_results = search_topic(search_query.search_query)
-            formatted_results = format_search_results_from_searcher(search_results)
-            logger.debug(f"Search returned {len(search_results)} results")
-        except Exception as e:
-            logger.error(f"Failed to search for information: {e}")
-            formatted_results = "Error searching for information"
+        # Step 2: Search for answers to each question
+        all_search_results = []
+
+        for i, question in enumerate(search_questions.questions):
+            logger.info(
+                f"Searching for information about question {i+1}: {question.question}"
+            )
+
+            try:
+                # Search for information
+                search_results = search_topic(question.question)
+                formatted_results = format_search_results_from_searcher(search_results)
+                logger.debug(
+                    f"Search returned {len(search_results.get('results', []))} results for question {i+1}"
+                )
+
+                # Add the question to the results
+                question_with_results = {
+                    "question": question.question,
+                    "justification": question.justification,
+                    "search_results": formatted_results,
+                }
+
+                all_search_results.append(question_with_results)
+            except Exception as e:
+                logger.error(
+                    f"Failed to search for information for question {i+1}: {e}"
+                )
+                question_with_results = {
+                    "question": question.question,
+                    "justification": question.justification,
+                    "search_results": f"Error searching for information: {str(e)}",
+                }
+                all_search_results.append(question_with_results)
+
+        # Step 3: Format all results together
+        combined_results = self._format_combined_search_results(all_search_results)
 
         # Update the state
-        state["search_results"] = formatted_results
+        state["search_results"] = combined_results
         logger.debug("Search node completed successfully")
         return state
+
+    def _format_combined_search_results(self, all_results: List[Dict[str, str]]) -> str:
+        """
+        Format combined search results from multiple questions.
+
+        Args:
+            all_results (List[Dict[str, str]]): List of dictionaries containing questions and their search results.
+
+        Returns:
+            str: Formatted combined search results.
+        """
+        if not all_results:
+            return "No search results found"
+
+        formatted = "# Combined Search Results\n\n"
+
+        for i, result in enumerate(all_results, 1):
+            formatted += f"## Question {i}: {result['question']}\n"
+            formatted += f"*Justification: {result['justification']}*\n\n"
+            formatted += f"{result['search_results']}\n\n"
+            formatted += "---\n\n"
+
+        return formatted
 
     def _generate_node(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -251,8 +327,10 @@ class WriterAgent:
 
         # Generate the content
         messages = [
-            {"role": "system", "content": WRITER_SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
+            ChatCompletionSystemMessageParam(
+                content=WRITER_SYSTEM_PROMPT, role="system"
+            ),
+            ChatCompletionUserMessageParam(content=prompt, role="user"),
         ]
 
         # Use structured output to get the notebook section content
@@ -332,8 +410,10 @@ class WriterAgent:
 
         # Evaluate the content
         messages = [
-            {"role": "system", "content": CRITIC_SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
+            ChatCompletionSystemMessageParam(
+                content=CRITIC_SYSTEM_PROMPT, role="system"
+            ),
+            ChatCompletionUserMessageParam(content=prompt, role="user"),
         ]
 
         # Get the evaluation
@@ -417,8 +497,10 @@ class WriterAgent:
 
         # Generate the revised content
         messages = [
-            {"role": "system", "content": WRITER_SYSTEM_PROMPT},
-            {"role": "user", "content": revision_prompt},
+            ChatCompletionSystemMessageParam(
+                content=WRITER_SYSTEM_PROMPT, role="system"
+            ),
+            ChatCompletionUserMessageParam(content=revision_prompt, role="user"),
         ]
 
         # Use structured output to get the revised notebook section content
@@ -506,7 +588,7 @@ class WriterAgent:
         self,
         notebook_plan: NotebookPlanModel,
         section_index: int,
-        additional_requirements: Optional[Dict[str, Any]] = None,
+        additional_requirements: Optional[List[str]] = None,
         previous_content: Optional[Dict[str, str]] = None,
         max_retries: int = 3,
     ) -> NotebookSectionContent:

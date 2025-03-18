@@ -215,11 +215,11 @@ def run_writer_test(
         writer = WriterAgent(model=model)
 
         # Additional requirements
-        additional_requirements = {
-            "code_style": "Include detailed comments in code examples",
-            "error_handling": "Show proper error handling for API calls",
-            "formatting": "Use clear markdown formatting with proper headers and code blocks",
-        }
+        additional_requirements = []
+        additional_requirements.append("Include detailed comments in code examples")
+        additional_requirements.append(
+            "Use clear markdown formatting with proper headers and code blocks"
+        )
 
         # Generate content
         if section_index is not None:

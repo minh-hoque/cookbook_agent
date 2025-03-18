@@ -57,6 +57,24 @@ class SearchQuery(BaseModel):
     )
 
 
+class SearchQuestion(BaseModel):
+    """Model for a search question."""
+
+    question: str = Field(description="A specific question about the topic.")
+    justification: str = Field(
+        description="Why this question is relevant to the topic."
+    )
+
+
+class MultipleSearchQuestions(BaseModel):
+    """Model for multiple search questions."""
+
+    questions: List[SearchQuestion] = Field(
+        description="List of specific questions about the topic."
+    )
+    reasoning: str = Field(description="Overall reasoning for the selected questions.")
+
+
 class NotebookCell(BaseModel):
     """Model for a notebook cell."""
 

@@ -8,6 +8,7 @@ import argparse
 import sys
 import os
 import logging
+import json  # Add json import
 from datetime import datetime
 from typing import Dict, List, Any
 from src.user_input import UserInputHandler
@@ -15,6 +16,11 @@ from src.planner import PlannerLLM
 from src.models import NotebookPlanModel
 from src.tools.clarification_tools import get_clarifications
 from src.tools.debug import DebugLevel, setup_logging
+from src.writer import WriterAgent  # Import the WriterAgent
+from src.format import (
+    notebook_content_to_markdown,
+    save_markdown_to_file,
+)  # Import format utilities
 
 # Get a logger for this module
 logger = logging.getLogger(__name__)
@@ -93,6 +99,11 @@ def main():
         action="store_true",
         help="Run a test of the logging system and exit",
         default=False,
+    )
+    parser.add_argument(
+        "--model",
+        help="OpenAI model to use for content generation",
+        default="gpt-4.5-preview-2025-02-27",
     )
     args = parser.parse_args()
 
@@ -228,8 +239,13 @@ def main():
     print("\nNotebook Plan:")
     print(formatted_plan)
 
+    # Create output directory
+    output_dir = "output"
+    os.makedirs(output_dir, exist_ok=True)
+    logger.debug(f"Created output directory: {output_dir}")
+
     # Save the plan to a file
-    output_file = "notebook_plan.md"
+    output_file = os.path.join(output_dir, "notebook_plan.md")
     logger.debug(f"Saving notebook plan to file: {output_file}")
     try:
         with open(output_file, "w") as f:
@@ -241,11 +257,77 @@ def main():
 
     print(f"\nNotebook plan saved to {output_file}")
 
-    # TODO: Pass the plan to the Writer LLM
-    logger.info("Notebook planning complete")
-    print(
-        "\nNext steps would be to generate the notebook content using the Writer LLM."
-    )
+    # Initialize the writer agent
+    logger.info(f"Initializing WriterAgent with model: {args.model}")
+    try:
+        writer = WriterAgent(model=args.model)
+        logger.debug("WriterAgent initialized successfully")
+
+        # Ask user if they want to proceed with generating the notebook
+        user_input = input(
+            "\nDo you want to generate the notebook content now? (y/n): "
+        )
+        if user_input.lower() != "y":
+            print(
+                "\nNotebook generation skipped. You can run the tool again later to generate content."
+            )
+            logger.info("User chose to skip notebook content generation")
+            sys.exit(0)
+
+        # Generate the notebook content
+        print("\nGenerating notebook content based on the plan...")
+        logger.info("Generating notebook content")
+
+        # Use existing requirements directly from user input
+        additional_requirements = user_requirements.get("additional_requirements", [])
+
+        # Generate the content
+        section_contents = writer.generate_content(
+            notebook_plan=notebook_plan,
+            additional_requirements=additional_requirements,
+            max_retries=3,  # Reduce retries for faster generation
+        )
+
+        # Save the generated content to a file
+        notebook_filename = f"{notebook_plan.title.replace(' ', '_').lower()}"
+
+        try:
+            # Save each section content as JSON
+            for i, section_content in enumerate(section_contents):
+                section_json_file = os.path.join(
+                    output_dir,
+                    f"section_{i+1}_{section_content.section_title.replace(' ', '_').replace(':', '')}.json",
+                )
+                with open(section_json_file, "w") as f:
+                    json.dump(section_content.model_dump(), f, indent=2)
+                logger.info(f"Saved section {i+1} to {section_json_file}")
+
+            # Generate markdown from all sections
+            markdown_content = notebook_content_to_markdown(section_contents)
+
+            # Save the markdown to a file
+            markdown_filepath = os.path.join(output_dir, f"{notebook_filename}.md")
+            save_markdown_to_file(markdown_content, markdown_filepath)
+
+            logger.info(
+                f"Notebook content generated successfully and saved to {output_dir} directory"
+            )
+            print(
+                f"\nNotebook content generated successfully and saved to {output_dir} directory"
+            )
+            print(f"Markdown file: {markdown_filepath}")
+        except Exception as e:
+            logger.error(f"Error generating notebook file: {str(e)}")
+            print(f"Error generating notebook file: {str(e)}")
+
+    except ImportError:
+        logger.error("WriterAgent or required dependencies not available")
+        print(
+            "Error: WriterAgent or required dependencies are not available. Please check your installation."
+        )
+    except Exception as e:
+        logger.error(f"Error initializing WriterAgent: {str(e)}")
+        print(f"Error initializing WriterAgent: {str(e)}")
 
 
 if __name__ == "__main__":
