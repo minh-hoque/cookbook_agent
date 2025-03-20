@@ -5,6 +5,23 @@ This module contains the prompt templates used by the Writer LLM to generate
 notebook content based on the plan created by the Planner LLM.
 """
 
+# Web search prompt for detailed API information with code examples
+WEB_SEARCH_PROMPT = """
+When searching for information, provide detailed, clear, and comprehensive answers that directly address the query. 
+
+Focus on:
+1. Providing accurate and up-to-date information relevant to the query
+2. Including practical code examples in Python whenever the topic involves programming or APIs
+4. Including version information and noting any recent changes or deprecations for software-related topics
+5. Organizing information in a structured, easy-to-understand format
+6. Citing official documentation and reliable sources
+
+When searching for information about OpenAI APIs, provide code, examples, and explanations based on the official OpenAI API documentation.
+Do not include information that is not available in the official OpenAI API documentation.
+
+This information will be used to create educational Python notebooks, so clarity, accuracy, and depth are essential.
+"""
+
 WRITER_SYSTEM_PROMPT = """
 You are an AI assistant that specializes in writing educational Jupyter notebooks about OpenAI APIs.
 
@@ -36,7 +53,7 @@ Your goal is to generate high-quality, instructive content for a specific sectio
 - **Include links to relevant OpenAI documentation** to help users find more details.
 
 ### **Tone and Style:**
-- **Friendly and Encouraging:** Write as if you’re guiding a student. Keep the tone positive and supportive.
+- **Friendly and Encouraging:** Write as if you're guiding a student. Keep the tone positive and supportive.
 - **Clear and Concise:** Avoid unnecessary complexity; use simple language.
 - **Engaging and Practical:** Use real-world examples and interactive exercises to keep users engaged.
 - **Well-Commented Code:** Every code cell should have comments explaining what each part does.
@@ -202,4 +219,100 @@ For each cell in the notebook section, use the following JSON format:
 ```
 
 Revised Output:
+"""
+
+# Prompts for the SearchDecisionNode
+SEARCH_DECISION_INITIAL_PROMPT = """
+### Task
+Determine whether additional searches are needed before generating content for a notebook section on OpenAI APIs.
+
+### Current Date
+- **Month/Year:** {current_month_year}
+
+### Notebook Information
+- **Title:** {notebook_title}
+- **Description:** {notebook_description}
+- **Purpose:** {notebook_purpose}
+- **Target Audience:** {notebook_target_audience}
+
+### Section to Evaluate
+- **Section Title:** {section_title}
+- **Section Description:** {section_description}
+
+### Subsections to Include
+{subsections_details}
+
+### Additional Requirements
+{additional_requirements}
+
+### Existing Search Results
+{existing_search_results}
+
+### Previous Content (If Available)
+{previous_content}
+
+### Instructions
+1. **Analyze the section requirements** to understand what information is needed.
+2. **Review the existing search results** to determine if they provide sufficient information.
+3. **Decide if additional searches are needed** based on any knowledge gaps identified.
+4. If additional searches are needed, generate specific, targeted search queries to fill those gaps.
+5. **Remember to consider the current date ({current_month_year})** when formulating queries to ensure you get the most up-to-date information.
+
+### Decision-Making Criteria
+- Are the existing search results comprehensive enough to cover all subsections?
+- Do the results provide up-to-date and accurate information on OpenAI API features?
+- Are there any technical details, parameters, or concepts missing that would be essential for coding examples?
+- Would additional searches provide valuable information not currently available?
+- Is there time-sensitive information related to API changes or updates that needs to be considered?
+
+Please respond with a structured decision and justification.
+"""
+
+SEARCH_DECISION_POST_CRITIQUE_PROMPT = """
+### Task
+Re-evaluate whether additional searches are needed after receiving critique on the generated content.
+
+### Current Date
+- **Month/Year:** {current_month_year}
+
+### Notebook Information
+- **Title:** {notebook_title}
+- **Description:** {notebook_description}
+- **Purpose:** {notebook_purpose}
+- **Target Audience:** {notebook_target_audience}
+
+### Section to Evaluate
+- **Section Title:** {section_title}
+- **Section Description:** {section_description}
+
+### Subsections to Include
+{subsections_details}
+
+### Additional Requirements
+{additional_requirements}
+
+### Existing Search Results
+{existing_search_results}
+
+### Generated Content
+{generated_content}
+
+### Critic Evaluation
+{critic_evaluation}
+
+### Instructions
+1. **Analyze the critic's feedback** to identify specific information gaps or errors in the content.
+2. **Review the existing search results** to determine if they adequately address these issues.
+3. **Decide if additional targeted searches are needed** to resolve the specific problems identified by the critic.
+4. If additional searches are needed, generate specific, targeted search queries to address the critic's concerns.
+5. **Consider the current date ({current_month_year})** to ensure search queries will return the most recent, relevant information.
+
+### Decision-Making Criteria
+- Does the critic's feedback point to missing information that could be filled with additional searches?
+- Are there factual errors or outdated information that needs correction through fresh search results?
+- Are there technical aspects or code examples that need more comprehensive or accurate information?
+- Would additional searches significantly improve the content quality based on the critic's feedback?
+- Are there recent changes to the API (as of {current_month_year}) that should be addressed?
+
+Please respond with a structured decision and justification, focusing on how additional searches would address the specific issues raised by the critic.
 """

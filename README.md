@@ -116,8 +116,7 @@ cookbook_agent/
     │   ├── __init__.py
     │   ├── planner_prompts.py
     │   ├── writer_prompts.py
-    │   ├── critic_prompts.py
-    │   └── prompt_helpers.py
+    │   └── critic_prompts.py
     ├── tools/              # LLM tools
     │   ├── clarification_tools.py
     │   ├── debug.py

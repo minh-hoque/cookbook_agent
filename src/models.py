@@ -103,3 +103,18 @@ class CriticEvaluation(BaseModel):
     passed: bool = Field(
         description="Whether the content is acceptable as is or requires revision. True if the content is acceptable as is, false if it requires revision.",
     )
+
+
+class SearchDecision(BaseModel):
+    """Model for search decision output."""
+
+    needs_additional_search: bool = Field(
+        description="Whether additional searches are needed before proceeding to content generation."
+    )
+    reasoning: str = Field(
+        description="Detailed reasoning for the decision, including analysis of existing information and identified gaps."
+    )
+    search_queries: Optional[List[SearchQuery]] = Field(
+        description="List of specific search queries to be executed if additional searches are needed.",
+        default=None,
+    )

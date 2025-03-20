@@ -8,6 +8,9 @@ It uses langgraph to create a workflow that includes the Writer LLM and the Crit
 import os
 import json
 import logging
+import re
+import time
+from datetime import datetime
 from typing import Dict, List, Optional, Any, Union, Tuple, cast
 
 import openai
@@ -26,6 +29,14 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
 from langgraph.graph.message import add_messages
+from langchain_core.runnables import RunnablePassthrough
+from langchain_core.output_parsers import PydanticOutputParser
+from langchain.prompts import (
+    SystemMessagePromptTemplate,
+    HumanMessagePromptTemplate,
+    ChatPromptTemplate,
+)
+from langchain.prompts.chat import ChatPromptTemplate
 
 # Use absolute imports for proper package imports when running from root
 from src.models import (
@@ -38,24 +49,29 @@ from src.models import (
     NotebookSectionContent,
     NotebookCell,
     CriticEvaluation,
+    SearchDecision,
 )
 from src.prompts.writer_prompts import (
     WRITER_SYSTEM_PROMPT,
     WRITER_CONTENT_PROMPT,
     WRITER_REVISION_PROMPT,
+    SEARCH_DECISION_INITIAL_PROMPT,
+    SEARCH_DECISION_POST_CRITIQUE_PROMPT,
 )
 from src.prompts.critic_prompts import (
     CRITIC_SYSTEM_PROMPT,
     CRITIC_EVALUATION_PROMPT,
 )
-from src.prompts.prompt_helpers import (
+from src.format.format_utils import (
     format_subsections_details,
     format_additional_requirements,
     format_previous_content,
 )
 from src.searcher import (
     search_topic,
+    search_with_openai,
     format_search_results as format_search_results_from_searcher,
+    format_openai_search_results,
 )
 
 # Get a logger for this module
@@ -76,7 +92,7 @@ class WriterAgent:
     Agent for generating notebook content based on the plan created by the Planner LLM.
     """
 
-    def __init__(self, model: str = "gpt-4.5-preview-2025-02-27"):
+    def __init__(self, model: str = "gpt-4o"):
         """
         Initialize the Writer Agent.
 
@@ -132,17 +148,28 @@ class WriterAgent:
             previous_content: Dict[str, str]
             max_retries: int
             current_retries: int
+            has_critic_feedback: bool
+            search_decision_results: Optional[SearchDecision]
 
         # Create the graph
         workflow = StateGraph(State)
 
         # Add nodes
+        workflow.add_node("search_decision", self._search_decision_node)
         workflow.add_node("search", self._search_node)
         workflow.add_node("generate", self._generate_node)
         workflow.add_node("critic", self._critic_node)
         workflow.add_node("revise", self._revise_node)
 
         # Add edges
+        workflow.add_conditional_edges(
+            "search_decision",
+            self._needs_search,
+            {
+                True: "search",
+                False: "generate",
+            },
+        )
         workflow.add_edge("search", "generate")
         workflow.add_edge("generate", "critic")
         workflow.add_conditional_edges(
@@ -153,22 +180,189 @@ class WriterAgent:
                 False: END,
             },
         )
-        workflow.add_edge("revise", "critic")
+        workflow.add_edge("revise", "search_decision")
 
         # Set the entry point
-        workflow.set_entry_point("search")
+        workflow.set_entry_point("search_decision")
 
         # Compile the workflow
         logger.debug(f"Workflow created with nodes: {workflow.nodes}")
         return workflow
 
+    def _search_decision_node(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Decide whether additional searches are needed before generating content.
+
+        This function analyzes the current section requirements, any existing search results,
+        and (if available) critic feedback to determine if more searches are needed.
+        If so, it generates specific search queries to fill information gaps.
+
+        Args:
+            state (Dict[str, Any]): The current state.
+
+        Returns:
+            Dict[str, Any]: The updated state with search decision information.
+        """
+        logger.info(
+            f"Executing search decision node for section: {state['current_section'].title}"
+        )
+
+        # Get the current section and notebook plan
+        section = state["current_section"]
+        notebook_plan = state["notebook_plan"]
+
+        # Format existing search results (if any)
+        existing_search_results = state.get(
+            "search_results", "No existing search results"
+        )
+
+        # Get current month and year for time-relevant search queries
+        current_month_year = datetime.now().strftime("%B %Y")
+        logger.info(f"Current month/year for search queries: {current_month_year}")
+
+        # Determine which prompt to use based on presence of critic feedback
+        has_critic_feedback = state.get("has_critic_feedback", False)
+
+        if (
+            has_critic_feedback
+            and "evaluation" in state
+            and state["evaluation"] is not None
+        ):
+            logger.info("Using post-critique prompt for search decision")
+            # Format generated content for the prompt
+            generated_content = ""
+            if "generated_content" in state and state["generated_content"] is not None:
+                generated_content = self._format_cells_for_evaluation(
+                    state["generated_content"].cells
+                )
+
+            # Format the prompt with critic feedback
+            prompt = SEARCH_DECISION_POST_CRITIQUE_PROMPT.format(
+                current_month_year=current_month_year,
+                notebook_title=notebook_plan.title,
+                notebook_description=notebook_plan.description,
+                notebook_purpose=notebook_plan.purpose,
+                notebook_target_audience=notebook_plan.target_audience,
+                section_title=section.title,
+                section_description=section.description,
+                subsections_details=format_subsections_details(section.subsections),
+                additional_requirements=format_additional_requirements(
+                    state.get("additional_requirements", {})
+                ),
+                existing_search_results=existing_search_results,
+                generated_content=generated_content,
+                critic_evaluation=state["evaluation"].rationale,
+            )
+        else:
+            logger.info("Using initial prompt for search decision")
+            # Format the prompt for initial search decision
+            prompt = SEARCH_DECISION_INITIAL_PROMPT.format(
+                current_month_year=current_month_year,
+                notebook_title=notebook_plan.title,
+                notebook_description=notebook_plan.description,
+                notebook_purpose=notebook_plan.purpose,
+                notebook_target_audience=notebook_plan.target_audience,
+                section_title=section.title,
+                section_description=section.description,
+                subsections_details=format_subsections_details(section.subsections),
+                additional_requirements=format_additional_requirements(
+                    state.get("additional_requirements", {})
+                ),
+                existing_search_results=existing_search_results,
+                previous_content=format_previous_content(
+                    state.get("previous_content", {})
+                ),
+            )
+
+        # Create messages for the decision
+        messages = [
+            ChatCompletionSystemMessageParam(
+                content="You are an AI assistant that analyzes information needs and determines when additional searches are required to generate high-quality educational content about OpenAI APIs.",
+                role="system",
+            ),
+            ChatCompletionUserMessageParam(content=prompt, role="user"),
+        ]
+
+        # Generate the search decision
+        try:
+            logger.debug("Calling OpenAI API to make search decision")
+            response = self.client.beta.chat.completions.parse(
+                model=self.model,
+                messages=messages,
+                response_format=SearchDecision,
+                temperature=0.3,
+            )
+
+            # Get the parsed decision
+            search_decision_results = response.choices[0].message.parsed
+            if search_decision_results:
+                logger.info(
+                    f"Search decision: needs_additional_search={search_decision_results.needs_additional_search}"
+                )
+                if (
+                    search_decision_results.needs_additional_search
+                    and search_decision_results.search_queries
+                ):
+                    logger.info(
+                        f"Generated {len(search_decision_results.search_queries)} search queries"
+                    )
+                    for i, query in enumerate(search_decision_results.search_queries):
+                        logger.info(f"Query {i+1}: {query.search_query}")
+                        logger.debug(f"Justification: {query.justification}")
+        except Exception as e:
+            logger.error(f"Failed to generate search decision: {e}")
+            # Create a default decision as fallback
+            search_decision_results = SearchDecision(
+                needs_additional_search=True,
+                reasoning="Error generating search decision, defaulting to performing a search",
+                search_queries=None,
+            )
+
+        # Store the decision in the state
+        state["search_decision_results"] = search_decision_results
+
+        # If coming from critic, update the has_critic_feedback flag to true
+        # This ensures subsequent runs will use the post-critique prompt
+        if "evaluation" in state and state["evaluation"] is not None:
+            state["has_critic_feedback"] = True
+
+        logger.debug("Search decision node completed successfully")
+        return state
+
+    def _needs_search(self, state: Dict[str, Any]) -> bool:
+        """
+        Determine whether to perform a search based on the search decision.
+
+        Args:
+            state (Dict[str, Any]): The current state.
+
+        Returns:
+            bool: True if a search should be performed, False otherwise.
+        """
+        # Check if we have a search decision
+        if (
+            "search_decision_results" not in state
+            or state["search_decision_results"] is None
+        ):
+            logger.debug("No search decision found, defaulting to performing search")
+            return True
+
+        # Get the decision
+        decision = state["search_decision_results"]
+
+        # Log the decision
+        logger.info(f"Search decision: {decision.needs_additional_search}")
+        logger.debug(f"Search reasoning: {decision.reasoning}")
+
+        # Return the decision
+        return decision.needs_additional_search
+
     def _search_node(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """
         Search for information related to the current section.
 
-        This function first generates N specific questions about the topic,
-        then searches for answers to those questions, and finally concatenates
-        the results with their respective questions.
+        This function uses search queries from the search decision if available,
+        or generates new questions and searches for information.
 
         Args:
             state (Dict[str, Any]): The current state.
@@ -183,80 +377,131 @@ class WriterAgent:
         # Get the current section
         section = state["current_section"]
 
-        # Number of questions to generate
-        num_questions = 3  # Can be adjusted as needed
-
-        # Step 1: Generate N specific questions about the topic
-        questions_prompt = [
-            ChatCompletionSystemMessageParam(
-                content="You are an AI assistant that helps create specific questions for finding information about OpenAI API topics.",
-                role="system",
-            ),
-            ChatCompletionUserMessageParam(
-                content=f"Create {num_questions} specific questions to find detailed information about the following OpenAI API topic: {section.title}. The section description is: {section.description}.\n\n{format_subsections_details(section.subsections)}\n\nGenerate questions that would help gather comprehensive information for creating educational content about this topic and its subsections.",
-                role="user",
-            ),
-        ]
-
-        # Generate the questions
-        try:
-            structured_questions = self.client.beta.chat.completions.parse(
-                model=self.model,
-                messages=questions_prompt,
-                response_format=MultipleSearchQuestions,
-                temperature=0.3,
-            )
-            search_questions = structured_questions.choices[0].message.parsed
-            if search_questions and search_questions.questions:
-                logger.info(f"Generated {len(search_questions.questions)} questions")
-                for i, q in enumerate(search_questions.questions):
-                    logger.info(f"Question {i+1}: {q.question}")
-                    logger.debug(f"Justification: {q.justification}")
-            else:
-                logger.error("Failed to generate valid search questions")
-                state["search_results"] = (
-                    "Error generating search questions: No valid questions generated"
-                )
-                return state
-        except Exception as e:
-            logger.error(f"Failed to generate search questions: {e}")
-            state["search_results"] = "Error generating search questions"
-            return state
-
-        # Step 2: Search for answers to each question
         all_search_results = []
 
-        for i, question in enumerate(search_questions.questions):
-            logger.info(
-                f"Searching for information about question {i+1}: {question.question}"
-            )
+        # Check if we have search queries from the search decision
+        if (
+            "search_decision_results" in state
+            and state["search_decision_results"] is not None
+            and state["search_decision_results"].search_queries is not None
+        ):
+            # Use the search queries from the decision
+            logger.info("Using search queries from search decision")
 
+            search_queries = state["search_decision_results"].search_queries
+            for i, query in enumerate(search_queries):
+                logger.info(
+                    f"Searching for information with query {i+1}: {query.search_query}"
+                )
+
+                try:
+                    # Search for information using OpenAI
+                    search_results = search_with_openai(
+                        topic=query.search_query,
+                        model=self.model,
+                        client=self.client,  # Pass the existing client
+                    )
+                    formatted_results = format_openai_search_results(search_results)
+                    logger.debug(f"OpenAI search completed for query {i+1}")
+
+                    # Add the query to the results
+                    query_with_results = {
+                        "question": query.search_query,
+                        "justification": query.justification,
+                        "search_results": formatted_results,
+                    }
+
+                    all_search_results.append(query_with_results)
+                except Exception as e:
+                    logger.error(
+                        f"Failed to search for information for query {i+1}: {e}"
+                    )
+                    query_with_results = {
+                        "question": query.search_query,
+                        "justification": query.justification,
+                        "search_results": f"Error searching for information: {str(e)}",
+                    }
+                    all_search_results.append(query_with_results)
+        else:
+            # Generate new questions if no search queries provided
+            logger.info("No search queries from search decision, generating questions")
+
+            # Number of questions to generate
+            num_questions = 3  # Can be adjusted as needed
+
+            # Step 1: Generate N specific questions about the topic
+            questions_prompt = [
+                ChatCompletionSystemMessageParam(
+                    content="You are an AI assistant that helps create specific questions for finding information about various topics.",
+                    role="system",
+                ),
+                ChatCompletionUserMessageParam(
+                    content=f"Create {num_questions} specific questions to find detailed information about the following topic: {section.title}. The section description is: {section.description}.\n\n{format_subsections_details(section.subsections)}\n\nGenerate questions that would help gather comprehensive information for creating educational content about this topic and its subsections.",
+                    role="user",
+                ),
+            ]
+
+            # Generate the questions
             try:
-                # Search for information
-                search_results = search_topic(question.question)
-                formatted_results = format_search_results_from_searcher(search_results)
-                logger.debug(
-                    f"Search returned {len(search_results.get('results', []))} results for question {i+1}"
+                structured_questions = self.client.beta.chat.completions.parse(
+                    model=self.model,
+                    messages=questions_prompt,
+                    response_format=MultipleSearchQuestions,
+                    temperature=0.3,
                 )
-
-                # Add the question to the results
-                question_with_results = {
-                    "question": question.question,
-                    "justification": question.justification,
-                    "search_results": formatted_results,
-                }
-
-                all_search_results.append(question_with_results)
+                search_questions = structured_questions.choices[0].message.parsed
+                if search_questions and search_questions.questions:
+                    logger.info(
+                        f"Generated {len(search_questions.questions)} questions"
+                    )
+                    for i, q in enumerate(search_questions.questions):
+                        logger.info(f"Question {i+1}: {q.question}")
+                        logger.debug(f"Justification: {q.justification}")
+                else:
+                    logger.error("Failed to generate valid search questions")
+                    state["search_results"] = (
+                        "Error generating search questions: No valid questions generated"
+                    )
+                    return state
             except Exception as e:
-                logger.error(
-                    f"Failed to search for information for question {i+1}: {e}"
+                logger.error(f"Failed to generate search questions: {e}")
+                state["search_results"] = "Error generating search questions"
+                return state
+
+            # Step 2: Search for answers to each question
+            for i, question in enumerate(search_questions.questions):
+                logger.info(
+                    f"Searching for information about question {i+1}: {question.question}"
                 )
-                question_with_results = {
-                    "question": question.question,
-                    "justification": question.justification,
-                    "search_results": f"Error searching for information: {str(e)}",
-                }
-                all_search_results.append(question_with_results)
+
+                try:
+                    # Search for information using OpenAI
+                    search_results = search_with_openai(
+                        topic=question.question,
+                        model=self.model,
+                        client=self.client,  # Pass the existing client
+                    )
+                    formatted_results = format_openai_search_results(search_results)
+                    logger.debug(f"OpenAI search completed for question {i+1}")
+
+                    # Add the question to the results
+                    question_with_results = {
+                        "question": question.question,
+                        "justification": question.justification,
+                        "search_results": formatted_results,
+                    }
+
+                    all_search_results.append(question_with_results)
+                except Exception as e:
+                    logger.error(
+                        f"Failed to search for information for question {i+1}: {e}"
+                    )
+                    question_with_results = {
+                        "question": question.question,
+                        "justification": question.justification,
+                        "search_results": f"Error searching for information: {str(e)}",
+                    }
+                    all_search_results.append(question_with_results)
 
         # Step 3: Format all results together
         combined_results = self._format_combined_search_results(all_search_results)
@@ -588,7 +833,7 @@ class WriterAgent:
         self,
         notebook_plan: NotebookPlanModel,
         section_index: int,
-        additional_requirements: Optional[List[str]] = None,
+        additional_requirements: Optional[Union[List[str], Dict[str, Any]]] = None,
         previous_content: Optional[Dict[str, str]] = None,
         max_retries: int = 3,
     ) -> NotebookSectionContent:
@@ -598,7 +843,7 @@ class WriterAgent:
         Args:
             notebook_plan (NotebookPlanModel): The notebook plan.
             section_index (int): The index of the section to generate content for.
-            additional_requirements (Optional[Dict[str, Any]], optional): Additional requirements for the content. Defaults to None.
+            additional_requirements (Optional[Union[List[str], Dict[str, Any]]], optional): Additional requirements for the content. Defaults to None.
             previous_content (Optional[Dict[str, str]], optional): Content from previous sections. Defaults to None.
             max_retries (int, optional): Maximum number of retries for content generation. Defaults to 3.
 
@@ -625,6 +870,8 @@ class WriterAgent:
             "previous_content": previous_content or {},
             "max_retries": max_retries,
             "current_retries": 0,
+            "has_critic_feedback": False,
+            "search_decision_results": None,
         }
 
         # Run the workflow
@@ -684,7 +931,7 @@ class WriterAgent:
     def generate_content(
         self,
         notebook_plan: NotebookPlanModel,
-        additional_requirements: Optional[Dict[str, Any]] = None,
+        additional_requirements: Optional[Union[List[str], Dict[str, Any]]] = None,
         max_retries: int = 3,
     ) -> List[NotebookSectionContent]:
         """
@@ -692,7 +939,7 @@ class WriterAgent:
 
         Args:
             notebook_plan (NotebookPlanModel): The notebook plan.
-            additional_requirements (Optional[Dict[str, Any]], optional): Additional requirements for the content. Defaults to None.
+            additional_requirements (Optional[Union[List[str], Dict[str, Any]]], optional): Additional requirements for the content. Defaults to None.
             max_retries (int, optional): Maximum number of retries for content generation. Defaults to 3.
 
         Returns:
