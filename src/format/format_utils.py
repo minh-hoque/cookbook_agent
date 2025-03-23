@@ -8,6 +8,8 @@ It also contains helper functions for formatting prompt elements.
 
 import json
 import logging
+import os
+import re
 from typing import Dict, List, Any, Union, Optional
 
 from src.models import NotebookSectionContent, NotebookCell, NotebookPlanModel
@@ -405,3 +407,429 @@ def format_clarifications(clarifications):
         formatted += f"Q: {question}\nA: {answer}\n\n"
 
     return formatted.strip() or "No clarifications provided"
+
+
+def save_notebook_content(
+    content_list: List[Dict[str, Any]], output_dir: str
+) -> Optional[str]:
+    """
+    Save the generated notebook content to files.
+
+    Args:
+        content_list (List[Dict[str, Any]]): List of notebook section contents.
+        output_dir (str): Directory to save the content to.
+
+    Returns:
+        Optional[str]: The path to the markdown file if successful, None otherwise.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    for i, section_content in enumerate(content_list):
+        # Create a sanitized filename
+        section_title = section_content.get("section_title", f"section_{i+1}")
+        filename = (
+            f"section_{i+1}_{section_title.replace(' ', '_').replace(':', '')}.json"
+        )
+        filepath = os.path.join(output_dir, filename)
+
+        # Save the content as JSON
+        with open(filepath, "w") as f:
+            json.dump(section_content, f, indent=2)
+
+        logger.info(f"Saved section {i+1} to {filepath}")
+
+    # Also save a single markdown file with all content
+    try:
+        # Convert the dictionary list to NotebookSectionContent objects
+        section_objects = [
+            NotebookSectionContent.model_validate(section) for section in content_list
+        ]
+
+        # Generate markdown from all sections
+        markdown_content = notebook_content_to_markdown(section_objects)
+
+        # Create a descriptive filename using the first section's title
+        if content_list and "section_title" in content_list[0]:
+            first_title = (
+                content_list[0]["section_title"].replace(" ", "_").replace(":", "")
+            )
+            markdown_filename = f"notebook_{first_title}.md"
+        else:
+            markdown_filename = "full_notebook.md"
+
+        # Save the markdown to a file
+        markdown_filepath = os.path.join(output_dir, markdown_filename)
+        save_markdown_to_file(markdown_content, markdown_filepath)
+
+        logger.info(f"Saved complete notebook as markdown to {markdown_filepath}")
+        return markdown_filepath
+    except Exception as e:
+        logger.error(f"Error saving markdown version: {e}")
+        return None
+
+
+def writer_output_to_notebook(
+    writer_output: List[NotebookSectionContent],
+    output_file: str,
+    metadata: Optional[Dict[str, Any]] = None,
+    notebook_title: Optional[str] = None,
+) -> bool:
+    """
+    Convert WriterAgent output to Jupyter Notebook (.ipynb) format and save to a file.
+
+    This function takes WriterAgent output (list of NotebookSectionContent objects),
+    converts it to Jupyter Notebook format, and saves it to a file.
+
+    Args:
+        writer_output: List of NotebookSectionContent objects from WriterAgent
+        output_file: Path to save the notebook output (should end with .ipynb)
+        metadata: Optional metadata to include in the notebook
+        notebook_title: Optional title for the notebook (used in markdown header)
+
+    Returns:
+        bool: True if the notebook was saved successfully, False otherwise
+    """
+    logger.info(f"Converting WriterAgent output to notebook format")
+
+    try:
+        # Initialize notebook structure
+        notebook = {
+            "metadata": metadata
+            or {
+                "kernelspec": {
+                    "display_name": "Python 3",
+                    "language": "python",
+                    "name": "python3",
+                },
+                "language_info": {
+                    "codemirror_mode": {"name": "ipython", "version": 3},
+                    "file_extension": ".py",
+                    "mimetype": "text/x-python",
+                    "name": "python",
+                    "nbconvert_exporter": "python",
+                    "pygments_lexer": "ipython3",
+                    "version": "3.8.0",
+                },
+            },
+            "nbformat": 4,
+            "nbformat_minor": 4,
+            "cells": [],
+        }
+
+        # Add title cell if provided
+        if notebook_title:
+            notebook["cells"].append(
+                {
+                    "cell_type": "markdown",
+                    "metadata": {},
+                    "source": [f"# {notebook_title}"],
+                }
+            )
+
+        # Process each section
+        for section in writer_output:
+            # Add section title as markdown header
+            notebook["cells"].append(
+                {
+                    "cell_type": "markdown",
+                    "metadata": {},
+                    "source": [f"## {section.section_title}"],
+                }
+            )
+
+            # Process each cell in the section
+            for cell in section.cells:
+                if cell.cell_type == "markdown":
+                    notebook["cells"].append(
+                        {
+                            "cell_type": "markdown",
+                            "metadata": {},
+                            "source": cell.content.split("\n"),
+                        }
+                    )
+                elif cell.cell_type == "code":
+                    notebook["cells"].append(
+                        {
+                            "cell_type": "code",
+                            "metadata": {"execution_count": None, "outputs": []},
+                            "source": cell.content.split("\n"),
+                            "execution_count": None,
+                            "outputs": [],
+                        }
+                    )
+                else:
+                    logger.warning(f"Unknown cell type: {cell.cell_type}")
+
+        # Ensure .ipynb extension
+        if not output_file.endswith(".ipynb"):
+            output_file = output_file + ".ipynb"
+
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(os.path.abspath(output_file)), exist_ok=True)
+
+        # Save the notebook
+        with open(output_file, "w") as f:
+            json.dump(notebook, f, indent=2)
+
+        logger.info(f"Notebook saved successfully to {output_file}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Error converting WriterAgent output to notebook: {e}")
+        return False
+
+
+def save_notebook_to_python_script(
+    writer_output: List[NotebookSectionContent],
+    output_file: str,
+    include_markdown: bool = True,
+) -> bool:
+    """
+    Convert WriterAgent output to a Python script (.py) file.
+
+    This can be useful for users who want to run the code without using Jupyter.
+    Markdown cells can be included as comments.
+
+    Args:
+        writer_output: List of NotebookSectionContent objects from WriterAgent
+        output_file: Path to save the Python script
+        include_markdown: Whether to include markdown cells as comments
+
+    Returns:
+        bool: True if the script was saved successfully, False otherwise
+    """
+    logger.info(f"Converting WriterAgent output to Python script")
+
+    try:
+        # Ensure .py extension
+        if not output_file.endswith(".py"):
+            output_file = output_file + ".py"
+
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(os.path.abspath(output_file)), exist_ok=True)
+
+        # Convert to Python script
+        script_content = []
+
+        # Add a header
+        script_content.append("#!/usr/bin/env python3")
+        script_content.append('"""')
+        script_content.append("This script was auto-generated from a notebook")
+        script_content.append('"""')
+        script_content.append("")
+
+        # Process each section
+        for section in writer_output:
+            if include_markdown:
+                script_content.append("#" * 80)
+                script_content.append(f"# SECTION: {section.section_title}")
+                script_content.append("#" * 80)
+                script_content.append("")
+
+            # Process each cell in the section
+            for cell in section.cells:
+                if cell.cell_type == "markdown" and include_markdown:
+                    # Convert markdown to Python comments
+                    for line in cell.content.split("\n"):
+                        if line.strip():
+                            script_content.append(f"# {line}")
+                        else:
+                            script_content.append("#")
+                    script_content.append("")
+                elif cell.cell_type == "code":
+                    # Add code directly
+                    script_content.append(cell.content)
+                    script_content.append("")
+
+        # Save the script
+        with open(output_file, "w") as f:
+            f.write("\n".join(script_content))
+
+        logger.info(f"Python script saved successfully to {output_file}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Error converting WriterAgent output to Python script: {e}")
+        return False
+
+
+def writer_output_to_files(
+    writer_output: List[NotebookSectionContent],
+    output_dir: str,
+    notebook_title: Optional[str] = None,
+    formats: List[str] = ["ipynb", "py", "md"],
+) -> Dict[str, str]:
+    """
+    Convert WriterAgent output to multiple file formats and save them.
+
+    This is a convenience function that calls the appropriate conversion functions.
+
+    Args:
+        writer_output: List of NotebookSectionContent objects from WriterAgent
+        output_dir: Directory to save the output files
+        notebook_title: Optional title for the notebook
+        formats: List of formats to save as (supported: "ipynb", "py", "md")
+
+    Returns:
+        Dict[str, str]: Dictionary mapping format to filepath
+    """
+    logger.info(f"Converting WriterAgent output to multiple formats: {formats}")
+
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Generate base filename from title or default
+    base_filename = "notebook"
+    if notebook_title:
+        base_filename = notebook_title.lower().replace(" ", "_").replace("-", "_")
+
+    results = {}
+
+    # Convert to each requested format
+    for fmt in formats:
+        if fmt.lower() == "ipynb":
+            output_file = os.path.join(output_dir, f"{base_filename}.ipynb")
+            if writer_output_to_notebook(
+                writer_output, output_file, notebook_title=notebook_title
+            ):
+                results["ipynb"] = output_file
+
+        elif fmt.lower() == "py":
+            output_file = os.path.join(output_dir, f"{base_filename}.py")
+            if save_notebook_to_python_script(writer_output, output_file):
+                results["py"] = output_file
+
+        elif fmt.lower() == "md":
+            output_file = os.path.join(output_dir, f"{base_filename}.md")
+            markdown = writer_output_to_markdown(writer_output, output_file)
+            if markdown:
+                results["md"] = output_file
+
+        else:
+            logger.warning(f"Unsupported format: {fmt}")
+
+    return results
+
+
+def notebook_to_writer_output(
+    notebook_file: str, section_header_level: int = 2
+) -> List[NotebookSectionContent]:
+    """
+    Convert a Jupyter notebook (.ipynb) file to WriterAgent output format.
+
+    This function is useful for loading existing notebooks and converting them
+    to the format expected by the WriterAgent for further processing.
+
+    Args:
+        notebook_file: Path to the Jupyter notebook file
+        section_header_level: The markdown header level that defines sections (default: 2, meaning ## headers)
+
+    Returns:
+        List[NotebookSectionContent]: The notebook content in WriterAgent format
+    """
+    logger.info(
+        f"Converting Jupyter notebook to WriterAgent output format: {notebook_file}"
+    )
+
+    try:
+        # Load the notebook
+        with open(notebook_file, "r") as f:
+            notebook_data = json.load(f)
+
+        # Process the notebook cells
+        notebook_cells = notebook_data.get("cells", [])
+
+        # Initialize variables
+        current_section = None
+        current_section_cells = []
+        sections = []
+
+        # Function to detect section headers in markdown cells
+        def is_section_header(source, level):
+            # Join the source lines and check for markdown header
+            text = (
+                "".join(source).strip() if isinstance(source, list) else source.strip()
+            )
+            header_pattern = f"^{'#' * level} "
+            return bool(re.match(header_pattern, text))
+
+        # Function to extract header text
+        def extract_header_text(source, level):
+            text = (
+                "".join(source).strip() if isinstance(source, list) else source.strip()
+            )
+            header_pattern = f"^{'#' * level} (.*)"
+            match = re.match(header_pattern, text)
+            if match:
+                return match.group(1).strip()
+            return "Untitled Section"
+
+        # Process each cell to find sections and their contents
+        for cell in notebook_cells:
+            cell_type = cell.get("cell_type")
+            source = cell.get("source", "")
+
+            # Check if this is a markdown cell that defines a new section
+            if cell_type == "markdown" and is_section_header(
+                source, section_header_level
+            ):
+                # If we already have a section, save it
+                if current_section is not None:
+                    sections.append(
+                        NotebookSectionContent(
+                            section_title=current_section, cells=current_section_cells
+                        )
+                    )
+
+                # Start a new section
+                current_section = extract_header_text(source, section_header_level)
+                current_section_cells = []
+
+                # Add this cell to the current section
+                cell_content = "".join(source) if isinstance(source, list) else source
+                current_section_cells.append(
+                    NotebookCell(cell_type="markdown", content=cell_content)
+                )
+            else:
+                # If we haven't encountered a section header yet, create a default section
+                if current_section is None:
+                    current_section = "Introduction"
+
+                # Add this cell to the current section
+                cell_content = "".join(source) if isinstance(source, list) else source
+                current_section_cells.append(
+                    NotebookCell(cell_type=cell_type, content=cell_content)
+                )
+
+        # Add the last section if it exists
+        if current_section is not None and current_section_cells:
+            sections.append(
+                NotebookSectionContent(
+                    section_title=current_section, cells=current_section_cells
+                )
+            )
+
+        # If no sections were found, create a single section with all cells
+        if not sections and notebook_cells:
+            all_cells = []
+            for cell in notebook_cells:
+                cell_type = cell.get("cell_type")
+                source = cell.get("source", "")
+                cell_content = "".join(source) if isinstance(source, list) else source
+                all_cells.append(
+                    NotebookCell(cell_type=cell_type, content=cell_content)
+                )
+
+            sections.append(
+                NotebookSectionContent(
+                    section_title="Notebook Content", cells=all_cells
+                )
+            )
+
+        logger.info(f"Converted notebook with {len(sections)} sections")
+        return sections
+
+    except Exception as e:
+        logger.error(f"Error converting Jupyter notebook to WriterAgent output: {e}")
+        # Return an empty list or raise an exception
+        return []

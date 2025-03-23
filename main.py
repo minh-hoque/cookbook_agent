@@ -8,74 +8,33 @@ import argparse
 import sys
 import os
 import logging
-import json  # Add json import
+import json
 from datetime import datetime
-from typing import Dict, List, Any
+from typing import Dict, Optional
+
+# Import core modules
 from src.user_input import UserInputHandler
 from src.planner import PlannerLLM
 from src.models import NotebookPlanModel
+from src.writer import WriterAgent
 from src.tools.clarification_tools import get_clarifications
-from src.tools.debug import DebugLevel, setup_logging
-from src.writer import WriterAgent  # Import the WriterAgent
+from src.tools.debug import DebugLevel
+
+# Import utilities
+from src.utils import configure_logging, test_logging
 from src.format import (
-    notebook_content_to_markdown,
-    save_markdown_to_file,
-)  # Import format utilities
+    format_notebook_plan,
+    save_plan_to_file,
+    save_notebook_content,
+    writer_output_to_notebook,
+)
 
 # Get a logger for this module
 logger = logging.getLogger(__name__)
 
 
-def test_logging():
-    """Test function to verify that the logging system captures caller information correctly."""
-    logger.debug("Test debug message from test_logging function")
-    logger.info("Test info message from test_logging function")
-    logger.error("Test error message from test_logging function")
-
-
-def format_notebook_plan(plan: NotebookPlanModel) -> str:
-    """
-    Format the notebook plan as a markdown string.
-
-    Args:
-        plan: The notebook plan to format
-
-    Returns:
-        A markdown string representation of the plan
-    """
-    logger.debug("Formatting notebook plan")
-
-    # Header section
-    result = f"# {plan.title}\n\n"
-    result += f"**Description:** {plan.description}\n\n"
-    result += f"**Purpose:** {plan.purpose}\n\n"
-    result += f"**Target Audience:** {plan.target_audience}\n\n"
-    result += "## Outline\n\n"
-
-    # Process sections
-    for i, section in enumerate(plan.sections, 1):
-        result += f"### {i}. {section.title}\n\n"
-        result += f"{section.description}\n\n"
-
-        # Process subsections if they exist
-        if section.subsections:
-            for j, subsection in enumerate(section.subsections, 1):
-                result += f"#### {i}.{j}. {subsection.title}\n\n"
-                result += f"{subsection.description}\n\n"
-
-                # Process sub-subsections if they exist
-                if subsection.subsections:
-                    for k, sub_subsection in enumerate(subsection.subsections, 1):
-                        result += f"##### {i}.{j}.{k}. {sub_subsection.title}\n\n"
-                        result += f"{sub_subsection.description}\n\n"
-
-    logger.debug("Notebook plan formatting complete")
-    return result
-
-
-def main():
-    """Main entry point for the AI Agent application."""
-    # Parse command line arguments first
+def parse_arguments():
+    """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="OpenAI Demo Notebook Generator")
     parser.add_argument(
         "--debug",
@@ -103,11 +62,13 @@ def main():
     parser.add_argument(
         "--model",
         help="OpenAI model to use for content generation",
-        default="gpt-4.5-preview-2025-02-27",
+        default="gpt-4o",
     )
-    args = parser.parse_args()
+    return parser.parse_args()
 
-    # Set up logging based on command line arguments
+
+def setup_logging_from_args(args):
+    """Set up logging based on command line arguments."""
     try:
         # Convert string to DebugLevel enum
         debug_level = DebugLevel[args.debug]
@@ -120,8 +81,8 @@ def main():
             log_file_path = os.path.join(log_dir, f"notebook_gen_{timestamp}.log")
 
         # Initialize logging
-        setup_logging(
-            level=debug_level, log_file=log_file_path, append=not args.no_append
+        configure_logging(
+            debug_level=debug_level, log_file=log_file_path, append=not args.no_append
         )
 
         # Test logging if requested
@@ -129,157 +90,132 @@ def main():
             logger.info("Running logging test...")
             test_logging()
             logger.info("Logging test complete")
-            sys.exit(0)
+            return False
 
-        # ---------------------------------------------------------------------
-        # UPDATED CODE: More comprehensive reduction of external library logging
-        # Reduce logging for external libraries to WARNING or higher:
-        logging.getLogger("httpcore").setLevel(logging.WARNING)
-        logging.getLogger("httpx").setLevel(logging.WARNING)
-        logging.getLogger("urllib3").setLevel(logging.WARNING)
-        logging.getLogger("openai").setLevel(logging.WARNING)
-        logging.getLogger("requests").setLevel(logging.WARNING)
-
-        # Silence other noisy libraries
-        for logger_name in logging.root.manager.loggerDict:
-            if any(
-                name in logger_name.lower()
-                for name in ["http", "urllib", "requests", "openai", "aiohttp"]
-            ):
-                logging.getLogger(logger_name).setLevel(logging.WARNING)
-        # ---------------------------------------------------------------------
-
+        return True
     except KeyError:
         # Fall back to INFO level if invalid level provided
-        setup_logging(level=DebugLevel.INFO)
+        configure_logging(debug_level=DebugLevel.INFO)
         logger.info("Invalid debug level specified, defaulting to INFO")
+        return True
 
-    logger.info("Starting OpenAI Demo Notebook Generator")
 
-    print("Welcome to the OpenAI Demo Notebook Generator!")
-    print(
-        "This tool will help you create Python notebooks showcasing OpenAI API capabilities."
-    )
+def search_for_topic_info(notebook_description: str) -> Optional[str]:
+    """
+    Search for information about the notebook topic.
 
-    # Initialize the user input handler
-    logger.debug("Initializing UserInputHandler")
-    input_handler = UserInputHandler()
+    Args:
+        notebook_description: Description of the notebook topic
 
-    # Collect user requirements
-    logger.info("Collecting user requirements")
-    user_requirements = input_handler.collect_requirements()
-    logger.debug(f"User requirements collected: {user_requirements}")
-
-    # Initialize the planner LLM
-    logger.debug("Initializing PlannerLLM")
-    planner = PlannerLLM()
-
-    # Search for information about the notebook topic
+    Returns:
+        Formatted search results or None if search failed
+    """
     logger.info("Searching for information about the notebook topic")
     formatted_search_results = None
-    notebook_description = user_requirements.get("notebook_description", "")
 
-    if notebook_description:
-        try:
-            from src.searcher import search_topic, format_search_results
-
-            print(f"\nSearching for information about: {notebook_description}")
-            search_results = search_topic(notebook_description)
-
-            if "error" in search_results:
-                logger.warning(f"Search error: {search_results['error']}")
-                print(f"Search warning: {search_results['error']}")
-            else:
-                result_count = len(search_results.get("results", []))
-                formatted_search_results = format_search_results(search_results)
-                print(f"Found {result_count} search results")
-
-                # Log a preview of the search results
-                if formatted_search_results:
-                    preview = (
-                        formatted_search_results[:200] + "..."
-                        if len(formatted_search_results) > 200
-                        else formatted_search_results
-                    )
-                    logger.debug(f"Search results preview: {preview}")
-
-        except ImportError:
-            logger.warning(
-                "Tavily search module not available. Install with: pip install tavily-python"
-            )
-            print(
-                "Search functionality not available. Continuing without search results."
-            )
-        except Exception as e:
-            logger.error(f"Error during search: {str(e)}")
-            print(f"Error searching for information: {str(e)}")
-    else:
+    if not notebook_description:
         logger.info("No notebook description provided for search")
         print(
             "No notebook description provided for search. Continuing without search results."
         )
+        return None
 
-    # Plan the notebook with interactive clarifications
+    try:
+        from src.searcher import search_topic, format_search_results
+
+        print(f"\nSearching for information about: {notebook_description}")
+        search_results = search_topic(notebook_description)
+
+        if "error" in search_results:
+            logger.warning(f"Search error: {search_results['error']}")
+            print(f"Search warning: {search_results['error']}")
+        else:
+            result_count = len(search_results.get("results", []))
+            formatted_search_results = format_search_results(search_results)
+            print(f"Found {result_count} search results")
+
+            # Log a preview of the search results
+            if formatted_search_results:
+                preview = (
+                    formatted_search_results[:200] + "..."
+                    if len(formatted_search_results) > 200
+                    else formatted_search_results
+                )
+                logger.debug(f"Search results preview: {preview}")
+
+        return formatted_search_results
+    except ImportError:
+        logger.warning(
+            "Tavily search module not available. Install with: pip install tavily-python"
+        )
+        print("Search functionality not available. Continuing without search results.")
+    except Exception as e:
+        logger.error(f"Error during search: {str(e)}")
+        print(f"Error searching for information: {str(e)}")
+
+    return None
+
+
+def create_notebook_plan(
+    user_requirements: Dict, search_results: Optional[str]
+) -> Optional[NotebookPlanModel]:
+    """
+    Create a notebook plan based on user requirements and search results.
+
+    Args:
+        user_requirements: Dictionary of user requirements
+        search_results: Optional formatted search results
+
+    Returns:
+        Notebook plan model or None if planning failed
+    """
     logger.info("Planning notebook with clarifications")
     try:
+        # Initialize the planner LLM
+        logger.debug("Initializing PlannerLLM")
+        planner = PlannerLLM()
+
+        # Plan the notebook with interactive clarifications
         notebook_plan = planner.plan_notebook(
             user_requirements,
             clarification_callback=get_clarifications,
-            search_results=formatted_search_results,
+            search_results=search_results,
         )
         logger.debug("Notebook plan created successfully")
+        return notebook_plan
     except Exception as e:
         logger.error(f"Error planning notebook: {str(e)}")
         print(f"An error occurred while planning the notebook: {str(e)}")
-        sys.exit(1)
+        return None
 
-    # Format and display the notebook plan
-    formatted_plan = format_notebook_plan(notebook_plan)
-    logger.info("Notebook plan formatted")
-    print("\nNotebook Plan:")
-    print(formatted_plan)
 
-    # Create output directory
-    output_dir = "output"
-    os.makedirs(output_dir, exist_ok=True)
-    logger.debug(f"Created output directory: {output_dir}")
+def generate_notebook_content(
+    notebook_plan: NotebookPlanModel,
+    additional_requirements: list,
+    model: str,
+    output_dir: str,
+) -> bool:
+    """
+    Generate notebook content based on the plan.
 
-    # Save the plan to a file
-    output_file = os.path.join(output_dir, "notebook_plan.md")
-    logger.debug(f"Saving notebook plan to file: {output_file}")
+    Args:
+        notebook_plan: The notebook plan model
+        additional_requirements: List of additional requirements
+        model: Model to use for generation
+        output_dir: Directory to save output to
+
+    Returns:
+        True if content generation was successful, False otherwise
+    """
+    logger.info(f"Initializing WriterAgent with model: {model}")
     try:
-        with open(output_file, "w") as f:
-            f.write(formatted_plan)
-        logger.info(f"Notebook plan saved to {output_file}")
-    except Exception as e:
-        logger.error(f"Error saving notebook plan: {str(e)}")
-        print(f"Warning: Could not save notebook plan to file: {str(e)}")
-
-    print(f"\nNotebook plan saved to {output_file}")
-
-    # Initialize the writer agent
-    logger.info(f"Initializing WriterAgent with model: {args.model}")
-    try:
-        writer = WriterAgent(model=args.model)
+        # Initialize the writer agent
+        writer = WriterAgent(model=model)
         logger.debug("WriterAgent initialized successfully")
-
-        # Ask user if they want to proceed with generating the notebook
-        user_input = input(
-            "\nDo you want to generate the notebook content now? (y/n): "
-        )
-        if user_input.lower() != "y":
-            print(
-                "\nNotebook generation skipped. You can run the tool again later to generate content."
-            )
-            logger.info("User chose to skip notebook content generation")
-            sys.exit(0)
 
         # Generate the notebook content
         print("\nGenerating notebook content based on the plan...")
         logger.info("Generating notebook content")
-
-        # Use existing requirements directly from user input
-        additional_requirements = user_requirements.get("additional_requirements", [])
 
         # Generate the content
         section_contents = writer.generate_content(
@@ -288,27 +224,22 @@ def main():
             max_retries=3,  # Reduce retries for faster generation
         )
 
-        # Save the generated content to a file
-        notebook_filename = f"{notebook_plan.title.replace(' ', '_').lower()}"
+        # Save the generated content in various formats
 
-        try:
-            # Save each section content as JSON
-            for i, section_content in enumerate(section_contents):
-                section_json_file = os.path.join(
-                    output_dir,
-                    f"section_{i+1}_{section_content.section_title.replace(' ', '_').replace(':', '')}.json",
-                )
-                with open(section_json_file, "w") as f:
-                    json.dump(section_content.model_dump(), f, indent=2)
-                logger.info(f"Saved section {i+1} to {section_json_file}")
+        # 1. Save as JSON files and markdown
+        content_list = [content.model_dump() for content in section_contents]
+        markdown_filepath = save_notebook_content(content_list, output_dir)
 
-            # Generate markdown from all sections
-            markdown_content = notebook_content_to_markdown(section_contents)
+        # 2. Save as Jupyter notebook (.ipynb)
+        notebook_title = notebook_plan.title
+        notebook_filepath = os.path.join(
+            output_dir, f"{notebook_title.replace(' ', '_')}.ipynb"
+        )
+        jupyter_success = writer_output_to_notebook(
+            section_contents, notebook_filepath, notebook_title=notebook_title
+        )
 
-            # Save the markdown to a file
-            markdown_filepath = os.path.join(output_dir, f"{notebook_filename}.md")
-            save_markdown_to_file(markdown_content, markdown_filepath)
-
+        if markdown_filepath:
             logger.info(
                 f"Notebook content generated successfully and saved to {output_dir} directory"
             )
@@ -316,18 +247,95 @@ def main():
                 f"\nNotebook content generated successfully and saved to {output_dir} directory"
             )
             print(f"Markdown file: {markdown_filepath}")
-        except Exception as e:
-            logger.error(f"Error generating notebook file: {str(e)}")
-            print(f"Error generating notebook file: {str(e)}")
 
+            if jupyter_success:
+                print(f"Jupyter Notebook: {notebook_filepath}")
+
+            return True
+        else:
+            logger.warning("Failed to save markdown content")
+            return jupyter_success  # Return True if at least Jupyter was successful
     except ImportError:
         logger.error("WriterAgent or required dependencies not available")
         print(
             "Error: WriterAgent or required dependencies are not available. Please check your installation."
         )
     except Exception as e:
-        logger.error(f"Error initializing WriterAgent: {str(e)}")
-        print(f"Error initializing WriterAgent: {str(e)}")
+        logger.error(f"Error generating notebook content: {str(e)}")
+        print(f"Error generating notebook content: {str(e)}")
+
+    return False
+
+
+def main():
+    """Main entry point for the AI Agent application."""
+    # Parse command line arguments
+    args = parse_arguments()
+
+    # Setup logging
+    if not setup_logging_from_args(args):
+        sys.exit(0)  # Exit if just testing logging
+
+    logger.info("Starting OpenAI Demo Notebook Generator")
+
+    # Print welcome message
+    print("Welcome to the OpenAI Demo Notebook Generator!")
+    print(
+        "This tool will help you create Python notebooks showcasing OpenAI API capabilities."
+    )
+
+    # Initialize the user input handler and collect requirements
+    logger.debug("Initializing UserInputHandler")
+    input_handler = UserInputHandler()
+
+    logger.info("Collecting user requirements")
+    user_requirements = input_handler.collect_requirements()
+    logger.debug(f"User requirements collected: {user_requirements}")
+
+    # Search for information about the notebook topic
+    notebook_description = user_requirements.get("notebook_description", "")
+    search_results = search_for_topic_info(notebook_description)
+
+    # Create notebook plan
+    notebook_plan = create_notebook_plan(user_requirements, search_results)
+    if not notebook_plan:
+        sys.exit(1)
+
+    # Create output directory
+    output_dir = "output"
+    os.makedirs(output_dir, exist_ok=True)
+    logger.debug(f"Created output directory: {output_dir}")
+
+    # Format and display the notebook plan
+    print("\nNotebook Plan:")
+    print(format_notebook_plan(notebook_plan))
+
+    # Save the plan to a file
+    output_file = os.path.join(output_dir, "notebook_plan.md")
+    try:
+        save_plan_to_file(notebook_plan, output_file)
+        print(f"\nNotebook plan saved to {output_file}")
+    except Exception as e:
+        logger.error(f"Error saving notebook plan: {str(e)}")
+        print(f"Warning: Could not save notebook plan to file: {str(e)}")
+
+    # Ask user if they want to proceed with generating the notebook
+    user_input = input("\nDo you want to generate the notebook content now? (y/n): ")
+    if user_input.lower() != "y":
+        print(
+            "\nNotebook generation skipped. You can run the tool again later to generate content."
+        )
+        logger.info("User chose to skip notebook content generation")
+        sys.exit(0)
+
+    # Generate notebook content
+    additional_requirements = user_requirements.get("additional_requirements", [])
+    generate_notebook_content(
+        notebook_plan=notebook_plan,
+        additional_requirements=additional_requirements,
+        model=args.model,
+        output_dir=output_dir,
+    )
 
 
 if __name__ == "__main__":

@@ -42,7 +42,11 @@ for logger_name in logging.root.manager.loggerDict:
 # ---------------------------------------------------------------------
 
 # Import format_utils functions at the top level
-from src.format.format_utils import notebook_content_to_markdown, save_markdown_to_file
+from src.format.format_utils import (
+    notebook_content_to_markdown,
+    save_markdown_to_file,
+    writer_output_to_notebook,
+)
 from src.models import NotebookSectionContent
 
 
@@ -159,6 +163,115 @@ def parse_markdown_to_plan(markdown_file: str) -> Dict[str, Any]:
     }
 
 
+def save_notebook_content(
+    content_list: List[Dict[str, Any]],
+    output_dir: str,
+    is_single_section: bool = False,
+    notebook_title: Optional[str] = None,
+    section_index: Optional[int] = None,
+) -> None:
+    """
+    Save the generated notebook content to files.
+
+    This function saves notebook content in multiple formats:
+    1. Individual JSON files for each section
+    2. A combined markdown file
+    3. A Jupyter notebook (.ipynb) file
+
+    Args:
+        content_list (List[Dict[str, Any]]): List of notebook section contents.
+        output_dir (str): Directory to save the content to.
+        is_single_section (bool): Whether this is saving content for a single section.
+        notebook_title (Optional[str]): Title of the notebook (used for the complete notebook).
+        section_index (Optional[int]): Index of the section if is_single_section is True.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    for i, section_content in enumerate(content_list):
+        # Create a sanitized filename
+        section_title = section_content.get("section_title", f"section_{i+1}")
+        filename = (
+            f"section_{i+1}_{section_title.replace(' ', '_').replace(':', '')}.json"
+        )
+        filepath = os.path.join(output_dir, filename)
+
+        # Save the content as JSON
+        with open(filepath, "w") as f:
+            json.dump(section_content, f, indent=2)
+
+        logger.info(f"Saved section {i+1} to {filepath}")
+
+    # Also save as markdown and notebook files
+    try:
+        # Convert the dictionary list to NotebookSectionContent objects
+        section_objects = [
+            NotebookSectionContent(**section) for section in content_list
+        ]
+
+        # Generate markdown from all sections
+        markdown_content = notebook_content_to_markdown(section_objects)
+
+        # Create a descriptive filename using the first section's title
+        if content_list and "section_title" in content_list[0]:
+            first_title = (
+                content_list[0]["section_title"].replace(" ", "_").replace(":", "")
+            )
+            markdown_filename = f"notebook_{first_title}.md"
+        else:
+            markdown_filename = "full_notebook.md"
+
+        # Save the markdown to a file
+        markdown_filepath = os.path.join(output_dir, markdown_filename)
+        save_markdown_to_file(markdown_content, markdown_filepath)
+        logger.info(f"Saved complete notebook as markdown to {markdown_filepath}")
+
+        # Save as Jupyter notebook (.ipynb)
+        if is_single_section:
+            # For single section, use a filename based on the section title
+            section_title = content_list[0].get(
+                "section_title",
+                f"section_{section_index+1 if section_index is not None else 1}",
+            )
+            notebook_filename = f"section_{section_index+1 if section_index is not None else 1}_{section_title.replace(' ', '_')}.ipynb"
+            section_notebook_title = f"Section {section_index+1 if section_index is not None else 1}: {section_title}"
+            notebook_filepath = os.path.join(output_dir, notebook_filename)
+
+            if writer_output_to_notebook(
+                section_objects,
+                notebook_filepath,
+                notebook_title=section_notebook_title,
+            ):
+                logger.info(f"Saved section as Jupyter notebook to {notebook_filepath}")
+        else:
+            # For complete notebook, use the provided notebook title
+            if notebook_title:
+                notebook_filename = f"{notebook_title.replace(' ', '_')}.ipynb"
+                notebook_filepath = os.path.join(output_dir, notebook_filename)
+
+                if writer_output_to_notebook(
+                    section_objects, notebook_filepath, notebook_title=notebook_title
+                ):
+                    logger.info(
+                        f"Saved complete Jupyter notebook to {notebook_filepath}"
+                    )
+            else:
+                # Fallback to a generic name if no title provided
+                notebook_filename = "full_notebook.ipynb"
+                notebook_filepath = os.path.join(output_dir, notebook_filename)
+
+                if writer_output_to_notebook(
+                    section_objects,
+                    notebook_filepath,
+                    notebook_title="Generated Notebook",
+                ):
+                    logger.info(
+                        f"Saved complete Jupyter notebook to {notebook_filepath}"
+                    )
+
+    except Exception as e:
+        logger.error(f"Error saving notebook versions: {e}")
+
+
 def run_writer_test(
     plan_file: str,
     output_dir: str = "output",
@@ -241,7 +354,13 @@ def run_writer_test(
             )
 
             # Save the content
-            save_notebook_content([content.model_dump()], output_dir)
+            save_notebook_content(
+                [content.model_dump()],
+                output_dir,
+                is_single_section=True,
+                section_index=section_index,
+            )
+
         else:
             # Generate content for all sections
             logger.info("Generating content for all sections")
@@ -251,8 +370,13 @@ def run_writer_test(
                 max_retries=max_retries,
             )
 
-            # Save the content
-            save_notebook_content([c.model_dump() for c in content_list], output_dir)
+            # Save the content with the notebook title
+            save_notebook_content(
+                [c.model_dump() for c in content_list],
+                output_dir,
+                is_single_section=False,
+                notebook_title=plan.title,
+            )
 
         logger.info("Content generation complete")
     except ImportError as e:
@@ -261,58 +385,6 @@ def run_writer_test(
     except Exception as e:
         logger.error(f"Error generating content: {e}")
         logger.info("Plan was saved to JSON, but content generation failed")
-
-
-def save_notebook_content(content_list: List[Dict[str, Any]], output_dir: str) -> None:
-    """
-    Save the generated notebook content to files.
-
-    Args:
-        content_list (List[Dict[str, Any]]): List of notebook section contents.
-        output_dir (str): Directory to save the content to.
-    """
-    os.makedirs(output_dir, exist_ok=True)
-
-    for i, section_content in enumerate(content_list):
-        # Create a sanitized filename
-        section_title = section_content.get("section_title", f"section_{i+1}")
-        filename = (
-            f"section_{i+1}_{section_title.replace(' ', '_').replace(':', '')}.json"
-        )
-        filepath = os.path.join(output_dir, filename)
-
-        # Save the content as JSON
-        with open(filepath, "w") as f:
-            json.dump(section_content, f, indent=2)
-
-        logger.info(f"Saved section {i+1} to {filepath}")
-
-    # Also save a single markdown file with all content
-    try:
-        # Convert the dictionary list to NotebookSectionContent objects
-        section_objects = [
-            NotebookSectionContent(**section) for section in content_list
-        ]
-
-        # Generate markdown from all sections
-        markdown_content = notebook_content_to_markdown(section_objects)
-
-        # Create a descriptive filename using the first section's title
-        if content_list and "section_title" in content_list[0]:
-            first_title = (
-                content_list[0]["section_title"].replace(" ", "_").replace(":", "")
-            )
-            markdown_filename = f"notebook_{first_title}.md"
-        else:
-            markdown_filename = "full_notebook.md"
-
-        # Save the markdown to a file
-        markdown_filepath = os.path.join(output_dir, markdown_filename)
-        save_markdown_to_file(markdown_content, markdown_filepath)
-
-        logger.info(f"Saved complete notebook as markdown to {markdown_filepath}")
-    except Exception as e:
-        logger.error(f"Error saving markdown version: {e}")
 
 
 def main():

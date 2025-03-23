@@ -102,7 +102,9 @@ The `parse_markdown_to_plan` function in `run_writer_test.py` parses this format
 
 ## Output Format
 
-The test saves the generated content as JSON files in the specified output directory. Each file contains a section content object with the following structure:
+The test saves the generated content in multiple formats in the specified output directory:
+
+1. **JSON Files**: Each section is saved as a separate JSON file with the following structure:
 
 ```json
 {
@@ -120,7 +122,27 @@ The test saves the generated content as JSON files in the specified output direc
 }
 ```
 
-These files can be used to create a Jupyter notebook or for further processing.
+2. **Markdown File**: A complete markdown version of the notebook is saved as a single file.
+
+3. **Jupyter Notebook (.ipynb)**: The content is saved as a ready-to-use Jupyter notebook file. This notebook can be opened directly in Jupyter Lab, Jupyter Notebook, VS Code, or any other compatible environment.
+
+The output behavior differs slightly depending on whether you're generating a single section or all sections:
+
+### When generating content for a single section
+
+The following files are created:
+- A JSON file with the section content (`section_N_SectionTitle.json`)
+- A markdown file containing just that section (`notebook_SectionTitle.md`)
+- A Jupyter notebook for just that section (`notebook_SectionTitle.ipynb`)
+
+### When generating content for all sections
+
+The following files are created:
+- Individual JSON files for each section (`section_1_SectionTitle.json`, `section_2_SectionTitle.json`, etc.)
+- A markdown file containing all sections (`notebook_FirstSectionTitle.md` or `full_notebook.md`)
+- A complete Jupyter notebook with all sections as a single file (`NotebookTitle.ipynb`)
+
+These files provide flexibility for different use cases and validation methods.
 
 ## Error Handling
 

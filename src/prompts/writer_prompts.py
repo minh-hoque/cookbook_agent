@@ -168,6 +168,9 @@ Revise the content for a section of a Jupyter notebook about OpenAI APIs based o
 ### **Evaluation Feedback:**  
 {evaluation_feedback}  
 
+### **Search Results:**
+{search_results}
+
 ---
 
 ### **Revision Instructions:**  
@@ -176,26 +179,31 @@ Revise the content for a section of a Jupyter notebook about OpenAI APIs based o
    - Carefully analyze the evaluation feedback.  
    - Identify all suggested improvements and issues that need to be addressed.  
 
-2. **Revise the Content Accordingly:**  
+2. **Utilize Search Results:**
+   - Use the provided search results to address information gaps in the original content.
+   - Incorporate relevant, up-to-date information from the search results into your revisions.
+   - Ensure technical details from search results are accurately reflected in code examples.
+
+3. **Revise the Content Accordingly:**  
    - Implement all necessary changes while keeping the original structure intact.  
    - Improve explanations, fix errors, and enhance clarity where needed.  
    - Ensure all modifications align with the feedback provided.  
 
-3. **Ensure Code Quality:**  
+4. **Ensure Code Quality:**  
    - Make sure all Python code examples are **correct, complete, and follow OpenAI API best practices**.  
    - Add **inline comments** to explain each step of the code.  
    - Implement **error handling** and ensure **secure API key management**.  
 
-4. **Maintain Proper Formatting:**  
+5. **Maintain Proper Formatting:**  
    - Keep the **same structure** as the original content.  
    - Clearly separate **markdown (explanations) and code cells**.  
    - Ensure the content is properly formatted for a Jupyter notebook.  
 
-5. **Confirm That All Issues Are Fixed:**  
+6. **Confirm That All Issues Are Fixed:**  
    - Double-check that every issue from the feedback is resolved.  
    - Ensure the content is more accurate, clear, and well-structured after revisions.  
 
-6. **Output Format:**  
+7. **Output Format:**  
    - Provide the revised content as a series of **Jupyter notebook cells** in the following format:  
 
 ### **Output Format:**

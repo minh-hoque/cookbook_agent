@@ -188,7 +188,7 @@ def search_with_openai(
             Defaults to "auto".
 
     Returns:
-        Dict[str, Any]: A dictionary containing the search results and metadata.
+        Dict[str, Any]: A dictionary containing the search query and results.
             If the search fails, returns a dictionary with an error message.
     """
     try:
@@ -234,11 +234,6 @@ def search_with_openai(
         return {
             "query": topic,
             "text": result_text,
-            "metadata": {
-                "model": model,
-                "search_context_size": search_context_size,
-                "tool_choice": tool_choice,
-            },
         }
 
     except Exception as e:
@@ -271,12 +266,12 @@ def format_openai_search_results(search_results: Dict[str, Any]) -> str:
     if "text" not in search_results or not search_results["text"]:
         return "No search results found"
 
-    # Format the text results
-    formatted_results = f"### Search Results:\n\n{search_results['text']}\n\n"
-
-    # Add query and metadata
-    formatted_results += (
+    # Add query
+    formatted_results = (
         f"### Query:\n{search_results.get('query', 'No query available')}\n\n"
     )
+
+    # Format the text results
+    formatted_results += f"### Search Results:\n\n{search_results['text']}\n\n"
 
     return formatted_results

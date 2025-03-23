@@ -15,6 +15,16 @@ from src.format.format_utils import (
     writer_output_to_markdown,
     json_file_to_markdown,
     json_string_to_markdown,
+    save_notebook_content,
+    writer_output_to_notebook,
+    save_notebook_to_python_script,
+    writer_output_to_files,
+    notebook_to_writer_output,
+)
+
+from src.format.plan_format import (
+    format_notebook_plan,
+    save_plan_to_file,
 )
 
 __all__ = [
@@ -27,4 +37,11 @@ __all__ = [
     "writer_output_to_markdown",
     "json_file_to_markdown",
     "json_string_to_markdown",
+    "save_notebook_content",
+    "format_notebook_plan",
+    "save_plan_to_file",
+    "writer_output_to_notebook",
+    "save_notebook_to_python_script",
+    "writer_output_to_files",
+    "notebook_to_writer_output",
 ]

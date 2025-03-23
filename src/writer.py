@@ -61,11 +61,14 @@ from src.prompts.writer_prompts import (
 from src.prompts.critic_prompts import (
     CRITIC_SYSTEM_PROMPT,
     CRITIC_EVALUATION_PROMPT,
+    FINAL_CRITIQUE_PROMPT,
 )
 from src.format.format_utils import (
     format_subsections_details,
     format_additional_requirements,
     format_previous_content,
+    notebook_content_to_markdown,
+    notebook_section_to_markdown,
 )
 from src.searcher import (
     search_topic,
@@ -160,6 +163,8 @@ class WriterAgent:
         workflow.add_node("generate", self._generate_node)
         workflow.add_node("critic", self._critic_node)
         workflow.add_node("revise", self._revise_node)
+        workflow.add_node("search_decision_after_critic", self._search_decision_node)
+        workflow.add_node("search_after_critic", self._search_node)
 
         # Add edges
         workflow.add_conditional_edges(
@@ -176,11 +181,22 @@ class WriterAgent:
             "critic",
             self._should_revise,
             {
-                True: "revise",
+                True: "search_decision_after_critic",
                 False: END,
             },
         )
-        workflow.add_edge("revise", "search_decision")
+
+        workflow.add_conditional_edges(
+            "search_decision_after_critic",
+            self._needs_search,
+            {
+                True: "search_after_critic",
+                False: "revise",
+            },
+        )
+
+        workflow.add_edge("search_after_critic", "revise")
+        workflow.add_edge("revise", "critic")
 
         # Set the entry point
         workflow.set_entry_point("search_decision")
@@ -738,6 +754,7 @@ class WriterAgent:
             section_description=section.description,
             original_content=formatted_content,
             evaluation_feedback=evaluation.rationale,
+            search_results=state.get("search_results", "No search results available"),
         )
 
         # Generate the revised content
@@ -981,3 +998,121 @@ class WriterAgent:
             f"Content generation completed for all {len(notebook_plan.sections)} sections"
         )
         return section_contents
+
+    def generate_content_with_final_critique(
+        self,
+        notebook_plan: NotebookPlanModel,
+        additional_requirements: Optional[Union[List[str], Dict[str, Any]]] = None,
+        max_retries: int = 3,
+    ) -> Tuple[List[NotebookSectionContent], str]:
+        """
+        Generate content for all sections of the notebook and perform a final critique.
+
+        Args:
+            notebook_plan (NotebookPlanModel): The notebook plan.
+            additional_requirements (Optional[Union[List[str], Dict[str, Any]]], optional): Additional requirements for the content. Defaults to None.
+            max_retries (int, optional): Maximum number of retries for content generation. Defaults to 3.
+
+        Returns:
+            Tuple[List[NotebookSectionContent], str]: The generated content for all sections and the final critique.
+        """
+        logger.info(
+            f"Generating content with final critique for notebook: {notebook_plan.title}"
+        )
+
+        # Generate all section contents
+        section_contents = self.generate_content(
+            notebook_plan=notebook_plan,
+            additional_requirements=additional_requirements,
+            max_retries=max_retries,
+        )
+
+        # Perform final critique on the complete notebook
+        final_critique = self._final_critique(notebook_plan, section_contents)
+
+        logger.info("Final critique completed")
+
+        # Print the critique to the console for review
+        print("\n==== FINAL NOTEBOOK CRITIQUE ====\n")
+        print(final_critique)
+        print("\n================================\n")
+
+        return section_contents, final_critique
+
+    def _final_critique(
+        self,
+        notebook_plan: NotebookPlanModel,
+        section_contents: List[NotebookSectionContent],
+    ) -> str:
+        """
+        Perform a final critique of the complete notebook.
+
+        Args:
+            notebook_plan (NotebookPlanModel): The notebook plan.
+            section_contents (List[NotebookSectionContent]): The generated content for all sections.
+
+        Returns:
+            str: The final critique of the notebook.
+        """
+        logger.info("Performing final critique of the complete notebook")
+
+        # Format all sections into a single notebook representation
+        formatted_notebook = self._format_notebook_for_critique(
+            notebook_plan, section_contents
+        )
+
+        # Use the Responses API with reasoning effort high
+        try:
+            logger.debug("Calling OpenAI Responses API for final critique")
+            response = self.client.responses.create(
+                model="o1",  # Use default model o1 as specified
+                input=f"{FINAL_CRITIQUE_PROMPT}\n\n### Notebook to Evaluate:\n{formatted_notebook}",
+                reasoning={"effort": "high"},
+            )
+
+            # Extract the critique - ensure it's a string
+            final_critique = (
+                str(response.text)
+                if response.text is not None
+                else "No critique was generated"
+            )
+            logger.info("Final critique generated successfully")
+            return final_critique
+
+        except Exception as e:
+            logger.error(f"Failed to generate final critique: {e}")
+            return f"Error generating final critique: {str(e)}"
+
+    def _format_notebook_for_critique(
+        self,
+        notebook_plan: NotebookPlanModel,
+        section_contents: List[NotebookSectionContent],
+    ) -> str:
+        """
+        Format the notebook sections for the final critique using existing format utility functions.
+
+        Args:
+            notebook_plan (NotebookPlanModel): The notebook plan.
+            section_contents (List[NotebookSectionContent]): The generated content for all sections.
+
+        Returns:
+            str: The formatted notebook.
+        """
+        logger.debug("Formatting notebook for final critique")
+
+        # Start with notebook metadata
+        formatted = f"# {notebook_plan.title}\n\n"
+        formatted += f"**Description:** {notebook_plan.description}\n\n"
+        formatted += f"**Purpose:** {notebook_plan.purpose}\n\n"
+        formatted += f"**Target Audience:** {notebook_plan.target_audience}\n\n"
+        formatted += "---\n\n"
+
+        # Add section headers for each section before including content
+        for i, (section, content) in enumerate(
+            zip(notebook_plan.sections, section_contents)
+        ):
+            formatted += f"## Section {i+1}: {section.title}\n\n"
+            formatted += notebook_section_to_markdown(content)
+            formatted += "\n---\n\n"
+
+        return formatted
