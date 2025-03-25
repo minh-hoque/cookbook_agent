@@ -152,10 +152,6 @@ FINAL_CRITIQUE_PROMPT = """You are tasked with evaluating the quality of a Pytho
 - Does the notebook avoid unnecessary complexity, choosing simple and maintainable solutions where possible?
 - Are choices justified, and do they reflect best practices in Python programming and data science?
 
-#### 7. Robustness and Generalization:
-- Is the code robust enough to handle edge cases or variations in input data?
-- Does the notebook consider potential exceptions, errors, or anomalies?
-- Are suggestions provided on how to extend or adapt the notebook to different or broader scenarios?
 
 ### Instructions for Evaluation:
 

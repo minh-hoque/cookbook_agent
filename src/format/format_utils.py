@@ -10,7 +10,7 @@ import json
 import logging
 import os
 import re
-from typing import Dict, List, Any, Union, Optional
+from typing import Dict, List, Any, Union, Optional, Literal
 
 from src.models import NotebookSectionContent, NotebookCell, NotebookPlanModel
 
@@ -528,15 +528,6 @@ def writer_output_to_notebook(
 
         # Process each section
         for section in writer_output:
-            # Add section title as markdown header
-            notebook["cells"].append(
-                {
-                    "cell_type": "markdown",
-                    "metadata": {},
-                    "source": [f"## {section.section_title}"],
-                }
-            )
-
             # Process each cell in the section
             for cell in section.cells:
                 if cell.cell_type == "markdown":
@@ -579,7 +570,7 @@ def writer_output_to_notebook(
         return False
 
 
-def save_notebook_to_python_script(
+def writer_output_to_python_script(
     writer_output: List[NotebookSectionContent],
     output_file: str,
     include_markdown: bool = True,
@@ -658,17 +649,21 @@ def writer_output_to_files(
     output_dir: str,
     notebook_title: Optional[str] = None,
     formats: List[str] = ["ipynb", "py", "md"],
+    original_content: Optional[List[NotebookSectionContent]] = None,
 ) -> Dict[str, str]:
     """
     Convert WriterAgent output to multiple file formats and save them.
 
     This is a convenience function that calls the appropriate conversion functions.
+    If original_content is provided, it will save both the original and revised versions
+    to allow for comparison.
 
     Args:
         writer_output: List of NotebookSectionContent objects from WriterAgent
         output_dir: Directory to save the output files
         notebook_title: Optional title for the notebook
         formats: List of formats to save as (supported: "ipynb", "py", "md")
+        original_content: Optional original content before revisions for comparison
 
     Returns:
         Dict[str, str]: Dictionary mapping format to filepath
@@ -694,16 +689,49 @@ def writer_output_to_files(
             ):
                 results["ipynb"] = output_file
 
+                # If original content is provided, save it as well
+                if original_content:
+                    original_output_file = os.path.join(
+                        output_dir, f"{base_filename}_original.ipynb"
+                    )
+                    if writer_output_to_notebook(
+                        original_content,
+                        original_output_file,
+                        notebook_title=f"{notebook_title} (Original)",
+                    ):
+                        results["ipynb_original"] = original_output_file
+
         elif fmt.lower() == "py":
             output_file = os.path.join(output_dir, f"{base_filename}.py")
-            if save_notebook_to_python_script(writer_output, output_file):
+            if writer_output_to_python_script(writer_output, output_file):
                 results["py"] = output_file
+
+                # If original content is provided, save it as well
+                if original_content:
+                    original_output_file = os.path.join(
+                        output_dir, f"{base_filename}_original.py"
+                    )
+                    if writer_output_to_python_script(
+                        original_content, original_output_file
+                    ):
+                        results["py_original"] = original_output_file
 
         elif fmt.lower() == "md":
             output_file = os.path.join(output_dir, f"{base_filename}.md")
             markdown = writer_output_to_markdown(writer_output, output_file)
             if markdown:
                 results["md"] = output_file
+
+                # If original content is provided, save it as well
+                if original_content:
+                    original_output_file = os.path.join(
+                        output_dir, f"{base_filename}_original.md"
+                    )
+                    original_markdown = writer_output_to_markdown(
+                        original_content, original_output_file
+                    )
+                    if original_markdown:
+                        results["md_original"] = original_output_file
 
         else:
             logger.warning(f"Unsupported format: {fmt}")
@@ -833,3 +861,270 @@ def notebook_to_writer_output(
         logger.error(f"Error converting Jupyter notebook to WriterAgent output: {e}")
         # Return an empty list or raise an exception
         return []
+
+
+def format_cells_for_evaluation(cells: List[NotebookCell]) -> str:
+    """
+    Format cells for evaluation.
+
+    Args:
+        cells (List[NotebookCell]): The cells to format.
+
+    Returns:
+        str: The formatted cells.
+    """
+    logger.debug(f"Formatting {len(cells)} cells for evaluation")
+
+    formatted = ""
+
+    for cell in cells:
+        if cell.cell_type == "markdown":
+            formatted += f"```markdown\n{cell.content}\n```\n\n"
+        else:
+            formatted += f"```python\n{cell.content}\n```\n\n"
+
+    formatted_content = formatted.strip()
+    logger.debug(
+        f"Formatted content for evaluation with {len(formatted_content)} characters"
+    )
+
+    return formatted_content
+
+
+def format_notebook_for_critique(
+    notebook_plan: NotebookPlanModel,
+    section_contents: List[NotebookSectionContent],
+) -> str:
+    """
+    Format the notebook sections for the final critique.
+
+    Args:
+        notebook_plan (NotebookPlanModel): The notebook plan.
+        section_contents (List[NotebookSectionContent]): The generated content for all sections.
+
+    Returns:
+        str: The formatted notebook.
+    """
+    logger.debug("Formatting notebook for final critique")
+
+    # Start with notebook metadata
+    formatted = f"# {notebook_plan.title}\n\n"
+    formatted += f"**Description:** {notebook_plan.description}\n\n"
+    formatted += f"**Purpose:** {notebook_plan.purpose}\n\n"
+    formatted += f"**Target Audience:** {notebook_plan.target_audience}\n\n"
+    formatted += "---\n\n"
+
+    # Add section headers for each section before including content
+    for i, (section, content) in enumerate(
+        zip(notebook_plan.sections, section_contents)
+    ):
+        formatted += f"## Section {i+1}: {section.title}\n\n"
+        formatted += notebook_section_to_markdown(content)
+        formatted += "\n---\n\n"
+
+    return formatted
+
+
+def markdown_to_notebook_content(
+    markdown_text: str, section_header_level: int = 2
+) -> List[NotebookSectionContent]:
+    """
+    Convert a markdown string to a list of NotebookSectionContent objects.
+
+    This function is the inverse of notebook_content_to_markdown, allowing for
+    conversion of markdown back to the structured format used by the WriterAgent.
+
+    Args:
+        markdown_text: Markdown text to convert
+        section_header_level: The markdown header level that defines sections (default: 2, meaning ## headers)
+
+    Returns:
+        List[NotebookSectionContent]: The markdown content in WriterAgent format
+    """
+    logger.info("Converting markdown to NotebookSectionContent objects")
+
+    # Split the markdown text into lines
+    lines = markdown_text.split("\n")
+
+    # Initialize variables
+    current_section = None
+    current_section_cells = []
+    sections = []
+    # Use Union[None, Literal] for clarity
+    current_cell_type: Union[None, Literal["markdown", "code"]] = None
+    current_cell_content = []
+
+    # Helper function to check for section headers
+    def is_section_header(line, level):
+        header_pattern = f"^{'#' * level} "
+        return bool(re.match(header_pattern, line.strip()))
+
+    # Helper function to extract header text
+    def extract_header_text(line, level):
+        header_pattern = f"^{'#' * level} (.*)"
+        match = re.match(header_pattern, line.strip())
+        if match:
+            return match.group(1).strip()
+        return "Untitled Section"
+
+    # Helper function to add the current cell to current_section_cells
+    def add_current_cell():
+        nonlocal current_cell_type, current_cell_content
+        if current_cell_type and current_cell_content:
+            content = "\n".join(current_cell_content)
+            current_section_cells.append(
+                NotebookCell(cell_type=current_cell_type, content=content)
+            )
+            current_cell_type = None
+            current_cell_content = []
+
+    # Process each line in the markdown
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+
+        # Check if this line marks a section header
+        if is_section_header(line, section_header_level):
+            # If we already have a section, save it
+            if current_section is not None:
+                add_current_cell()  # Add the last cell
+                sections.append(
+                    NotebookSectionContent(
+                        section_title=current_section, cells=current_section_cells
+                    )
+                )
+
+            # Start a new section
+            current_section = extract_header_text(line, section_header_level)
+            current_section_cells = []
+            current_cell_type = "markdown"
+            current_cell_content = [line]
+            i += 1
+        # Check if this line starts a code block
+        elif line.strip().startswith("```python"):
+            # Add the current markdown cell if it exists
+            add_current_cell()
+
+            # Start collecting code content
+            current_cell_type = "code"
+            current_cell_content = []
+            i += 1
+
+            # Collect all lines until the closing code block
+            while i < len(lines) and not lines[i].strip().startswith("```"):
+                current_cell_content.append(lines[i])
+                i += 1
+
+            # Skip the closing code block marker
+            if i < len(lines):
+                i += 1
+        # Check if this line starts any other code block (treat as markdown)
+        elif line.strip().startswith("```"):
+            if current_cell_type != "markdown":
+                add_current_cell()
+                current_cell_type = "markdown"
+
+            current_cell_content.append(line)
+            i += 1
+
+            # Include the code block content in the markdown cell
+            while i < len(lines) and not lines[i].strip().startswith("```"):
+                current_cell_content.append(lines[i])
+                i += 1
+
+            # Add the closing marker
+            if i < len(lines):
+                current_cell_content.append(lines[i])
+                i += 1
+        else:
+            # Regular markdown content
+            if current_cell_type != "markdown":
+                add_current_cell()
+                current_cell_type = "markdown"
+
+            current_cell_content.append(line)
+            i += 1
+
+    # Add the last cell and section if they exist
+    if current_section is not None:
+        add_current_cell()
+        sections.append(
+            NotebookSectionContent(
+                section_title=current_section, cells=current_section_cells
+            )
+        )
+
+    # If no sections were found but there is content, create a default section
+    if not sections and current_cell_content:
+        add_current_cell()
+        sections.append(
+            NotebookSectionContent(
+                section_title="Notebook Content", cells=current_section_cells
+            )
+        )
+
+    logger.info(f"Converted markdown to {len(sections)} NotebookSectionContent objects")
+    return sections
+
+
+def save_notebook_versions(
+    original_content: List[NotebookSectionContent],
+    revised_content: List[NotebookSectionContent],
+    critique: str,
+    output_dir: str,
+    notebook_title: Optional[str] = None,
+    formats: List[str] = ["ipynb", "py", "md"],
+) -> Dict[str, str]:
+    """
+    Save both original and revised versions of a notebook with the critique for comparison.
+
+    This function wraps writer_output_to_files to save both versions of the notebook
+    and also saves the critique as a separate markdown file.
+
+    Args:
+        original_content: Original NotebookSectionContent objects
+        revised_content: Revised NotebookSectionContent objects after applying critique
+        critique: The critique text that was used for revisions
+        output_dir: Directory to save the output files
+        notebook_title: Optional title for the notebook
+        formats: List of formats to save as (supported: "ipynb", "py", "md")
+
+    Returns:
+        Dict[str, str]: Dictionary mapping format to filepath
+    """
+    logger.info(f"Saving original and revised notebook versions to {output_dir}")
+
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Generate base filenames
+    base_filename = "notebook"
+    if notebook_title:
+        base_filename = notebook_title.lower().replace(" ", "_").replace("-", "_")
+
+    # Save both versions using writer_output_to_files
+    results = writer_output_to_files(
+        writer_output=revised_content,
+        output_dir=output_dir,
+        notebook_title=notebook_title,
+        formats=formats,
+        original_content=original_content,
+    )
+
+    # Save the critique as a separate markdown file
+    critique_filename = f"{base_filename}_critique.md"
+    critique_filepath = os.path.join(output_dir, critique_filename)
+
+    try:
+        with open(critique_filepath, "w") as f:
+            # Add a title to the critique
+            title = notebook_title or "Notebook"
+            f.write(f"# Critique for {title}\n\n")
+            f.write(critique)
+
+        results["critique"] = critique_filepath
+        logger.info(f"Saved critique to {critique_filepath}")
+    except Exception as e:
+        logger.error(f"Error saving critique to file: {e}")
+
+    return results

@@ -98,14 +98,14 @@ def run_interactive_test():
     Run an interactive test of the searcher functions.
     This is useful for manual testing and debugging.
     """
-    from src.searcher import search_topic
+    from src.searcher import search_with_taviley
 
     print("Running interactive test of searcher functions...")
 
     # Test search_topic function if API key is available
     try:
         print("\nSearching for 'OpenAI API tutorial'...")
-        results = search_topic("OpenAI API tutorial", max_results=3)
+        results = search_with_taviley("OpenAI API tutorial", max_results=3)
 
         print(f"\nSearch query: {results.get('query')}")
         print(

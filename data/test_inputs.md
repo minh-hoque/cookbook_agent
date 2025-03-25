@@ -59,8 +59,10 @@ Predicted Outputs are available today using the latest gpt-4o and gpt-4o-mini mo
 ---
 
 # Agents SDK
-The notebook should help customer understand how to use Agents SDK from OpenAI to build a multiagent framework that enables to generate synthetic transcripts between a telecommunication Customer Rep and their respective customer.
+The notebook should help customer understand how to use Agents SDK from OpenAI to build a multiagent framework that enables to generate synthetic transcripts between a telecommunication Customer Rep and their respective customer with multiple turns imitating a real customer conversation.
 
 Tutorial
 
 Machine Learning Engineers
+
+Use new agents sdk from openai

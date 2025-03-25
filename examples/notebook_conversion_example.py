@@ -19,7 +19,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.models import NotebookSectionContent, NotebookCell
 from src.format import (
     writer_output_to_notebook,
-    save_notebook_to_python_script,
+    writer_output_to_python_script,
     writer_output_to_markdown,
     writer_output_to_files,
     notebook_to_writer_output,
@@ -104,7 +104,7 @@ def main():
 
     # Example 2: Convert to Python script (.py)
     py_file = os.path.join(output_dir, "openai_api_example.py")
-    if save_notebook_to_python_script(notebook_content, py_file, include_markdown=True):
+    if writer_output_to_python_script(notebook_content, py_file, include_markdown=True):
         logger.info(f"Python script saved to: {py_file}")
 
     # Example 3: Convert to Markdown (.md)

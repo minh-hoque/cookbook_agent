@@ -159,11 +159,11 @@ print(completion.choices[0].message.content)
 
     if notebook_description:
         try:
-            from src.searcher import search_topic, format_search_results
+            from src.searcher import search_with_taviley, format_search_results
 
             print(f"\nSearching for information about: {notebook_description}")
             logger.debug(f"Searching for topic: {notebook_description}")
-            search_results = search_topic(notebook_description)
+            search_results = search_with_taviley(notebook_description)
 
             if "error" in search_results:
                 logger.warning(f"Search error: {search_results['error']}")

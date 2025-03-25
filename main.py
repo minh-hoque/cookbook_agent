@@ -102,7 +102,7 @@ def setup_logging_from_args(args):
 
 def search_for_topic_info(notebook_description: str) -> Optional[str]:
     """
-    Search for information about the notebook topic.
+    Search for information about the notebook topic using OpenAI's web search capability.
 
     Args:
         notebook_description: Description of the notebook topic
@@ -111,7 +111,6 @@ def search_for_topic_info(notebook_description: str) -> Optional[str]:
         Formatted search results or None if search failed
     """
     logger.info("Searching for information about the notebook topic")
-    formatted_search_results = None
 
     if not notebook_description:
         logger.info("No notebook description provided for search")
@@ -121,33 +120,25 @@ def search_for_topic_info(notebook_description: str) -> Optional[str]:
         return None
 
     try:
-        from src.searcher import search_topic, format_search_results
+        from src.searcher import search_with_openai, format_openai_search_results
 
         print(f"\nSearching for information about: {notebook_description}")
-        search_results = search_topic(notebook_description)
+        search_results = search_with_openai(notebook_description)
 
-        if "error" in search_results:
+        if "error" in search_results and search_results["error"]:
             logger.warning(f"Search error: {search_results['error']}")
             print(f"Search warning: {search_results['error']}")
-        else:
-            result_count = len(search_results.get("results", []))
-            formatted_search_results = format_search_results(search_results)
-            print(f"Found {result_count} search results")
+            return None
 
-            # Log a preview of the search results
-            if formatted_search_results:
-                preview = (
-                    formatted_search_results[:200] + "..."
-                    if len(formatted_search_results) > 200
-                    else formatted_search_results
-                )
-                logger.debug(f"Search results preview: {preview}")
+        formatted_results = format_openai_search_results(search_results)
+        print("Search completed successfully")
 
-        return formatted_search_results
+        # Log a preview of the search results
+        logger.debug(f"Search results preview: {formatted_results}")
+
+        return formatted_results
     except ImportError:
-        logger.warning(
-            "Tavily search module not available. Install with: pip install tavily-python"
-        )
+        logger.warning("OpenAI package not available. Install with: pip install openai")
         print("Search functionality not available. Continuing without search results.")
     except Exception as e:
         logger.error(f"Error during search: {str(e)}")
@@ -210,7 +201,9 @@ def generate_notebook_content(
     logger.info(f"Initializing WriterAgent with model: {model}")
     try:
         # Initialize the writer agent
-        writer = WriterAgent(model=model)
+        writer = WriterAgent(
+            model=model, max_retries=3, search_enabled=True, final_critique_enabled=True
+        )
         logger.debug("WriterAgent initialized successfully")
 
         # Generate the notebook content
@@ -218,16 +211,15 @@ def generate_notebook_content(
         logger.info("Generating notebook content")
 
         # Generate the content
-        section_contents = writer.generate_content(
+        original_content, final_critique, revised_content = writer.generate_content(
             notebook_plan=notebook_plan,
             additional_requirements=additional_requirements,
-            max_retries=3,  # Reduce retries for faster generation
         )
 
         # Save the generated content in various formats
 
         # 1. Save as JSON files and markdown
-        content_list = [content.model_dump() for content in section_contents]
+        content_list = [content.model_dump() for content in revised_content]
         markdown_filepath = save_notebook_content(content_list, output_dir)
 
         # 2. Save as Jupyter notebook (.ipynb)
@@ -236,7 +228,7 @@ def generate_notebook_content(
             output_dir, f"{notebook_title.replace(' ', '_')}.ipynb"
         )
         jupyter_success = writer_output_to_notebook(
-            section_contents, notebook_filepath, notebook_title=notebook_title
+            revised_content, notebook_filepath, notebook_title=notebook_title  # type: ignore
         )
 
         if markdown_filepath:
@@ -311,7 +303,8 @@ def main():
     print(format_notebook_plan(notebook_plan))
 
     # Save the plan to a file
-    output_file = os.path.join(output_dir, "notebook_plan.md")
+    notebook_title = notebook_plan.title
+    output_file = os.path.join(output_dir, f"{notebook_title}.md")
     try:
         save_plan_to_file(notebook_plan, output_file)
         print(f"\nNotebook plan saved to {output_file}")

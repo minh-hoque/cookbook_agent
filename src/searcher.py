@@ -34,7 +34,7 @@ except ImportError:
     print("Warning: python-dotenv not installed. Using environment variables directly.")
 
 # Import the web search prompt
-from src.prompts.writer_prompts import WEB_SEARCH_PROMPT
+from src.prompts.search_prompts import WEB_SEARCH_PROMPT
 
 
 def get_tavily_api_key() -> Optional[str]:
@@ -51,12 +51,12 @@ def get_tavily_api_key() -> Optional[str]:
     return api_key
 
 
-def search_topic(topic: str, max_results: int = 5) -> Dict[str, Any]:
+def search_with_tavily(search_query: str, max_results: int = 5) -> Dict[str, Any]:
     """
     Search for information about a topic using the Tavily API.
 
     Args:
-        topic (str): The topic to search for.
+        search_query (str): The query to search for.
         max_results (int, optional): Maximum number of search results to return. Defaults to 5.
 
     Returns:
@@ -72,11 +72,11 @@ def search_topic(topic: str, max_results: int = 5) -> Dict[str, Any]:
         client = TavilyClient(api_key=api_key)
 
         # Log the search query
-        logger.info(f"Searching for information about: {topic}")
+        logger.info(f"Searching for information about: {search_query}")
 
         # Perform the search
         response = client.search(
-            query=topic,
+            query=search_query,
             search_depth="advanced",  # Use advanced search for more comprehensive results
             max_results=max_results,
             include_answer="advanced",  # Use boolean instead of string # type: ignore
@@ -89,10 +89,10 @@ def search_topic(topic: str, max_results: int = 5) -> Dict[str, Any]:
         summary = response.get("answer", "")
 
         # Log the number of results found
-        logger.info(f"Found {len(results)} search results for topic: {topic}")
+        logger.info(f"Found {len(results)} search results for query: {search_query}")
 
         return {
-            "query": topic,
+            "query": search_query,
             "results": results,
             "summary": summary,
             "metadata": {
@@ -104,21 +104,21 @@ def search_topic(topic: str, max_results: int = 5) -> Dict[str, Any]:
 
     except Exception as e:
         # Log the error and return an empty result
-        logger.error(f"Error searching for topic '{topic}': {str(e)}")
+        logger.error(f"Error searching for query '{search_query}': {str(e)}")
         return {
             "error": str(e),
-            "query": topic,
+            "query": search_query,
             "results": [],
             "summary": f"Error searching for information: {str(e)}",
         }
 
 
-def format_search_results(search_results: Dict[str, Any]) -> str:
+def format_tavily_search_results(search_results: Dict[str, Any]) -> str:
     """
     Format search results into a string that can be included in the planning prompt.
 
     Args:
-        search_results (Dict[str, Any]): The search results from the search_topic function.
+        search_results (Dict[str, Any]): The search results from the search_with_tavily function.
 
     Returns:
         str: A formatted string containing the search results.
@@ -166,7 +166,7 @@ def get_openai_api_key() -> Optional[str]:
 
 
 def search_with_openai(
-    topic: str,
+    search_query: str,
     model: str = "gpt-4o",
     search_context_size: str = "high",
     client=None,
@@ -176,7 +176,7 @@ def search_with_openai(
     Search for information about a topic using OpenAI's web search capability.
 
     Args:
-        topic (str): The topic to search for.
+        search_query (str): The query to search for.
         model (str, optional): The OpenAI model to use. Defaults to "gpt-4o".
         search_context_size (str, optional): The search context size. Defaults to "high".
         client (OpenAI, optional): An existing OpenAI client. If not provided, a new one will be created.
@@ -212,7 +212,7 @@ def search_with_openai(
             client = OpenAI(api_key=api_key)
 
         # Log the search query
-        logger.info(f"Searching for information about: {topic} using OpenAI")
+        logger.info(f"Searching for information about: {search_query} using OpenAI")
 
         # Validate tool_choice
         valid_tool_choices = ["none", "auto", "required"]
@@ -224,7 +224,7 @@ def search_with_openai(
             model=model,
             instructions=WEB_SEARCH_PROMPT,
             tools=[{"type": "web_search_preview", "search_context_size": search_context_size}],  # type: ignore
-            input=topic,
+            input=search_query,
             tool_choice=tool_choice,  # type: ignore  # Add tool_choice parameter
         )
 
@@ -232,16 +232,18 @@ def search_with_openai(
         result_text = response.output_text
 
         return {
-            "query": topic,
+            "query": search_query,
             "text": result_text,
         }
 
     except Exception as e:
         # Log the error and return an error result
-        logger.error(f"Error searching for topic '{topic}' with OpenAI: {str(e)}")
+        logger.error(
+            f"Error searching for query '{search_query}' with OpenAI: {str(e)}"
+        )
         return {
             "error": str(e),
-            "query": topic,
+            "query": search_query,
             "text": f"Error searching for information: {str(e)}",
         }
 

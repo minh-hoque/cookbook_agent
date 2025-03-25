@@ -46,6 +46,7 @@ from src.format.format_utils import (
     notebook_content_to_markdown,
     save_markdown_to_file,
     writer_output_to_notebook,
+    save_notebook_versions,
 )
 from src.models import NotebookSectionContent
 
@@ -350,7 +351,6 @@ def run_writer_test(
                 notebook_plan=plan,
                 section_index=section_index,
                 additional_requirements=additional_requirements,
-                max_retries=max_retries,
             )
 
             # Save the content
@@ -364,18 +364,18 @@ def run_writer_test(
         else:
             # Generate content for all sections
             logger.info("Generating content for all sections")
-            content_list = writer.generate_content(
+            original_content, final_critique, revised_content = writer.generate_content(
                 notebook_plan=plan,
                 additional_requirements=additional_requirements,
-                max_retries=max_retries,
             )
 
-            # Save the content with the notebook title
-            save_notebook_content(
-                [c.model_dump() for c in content_list],
+            save_notebook_versions(
+                original_content,
+                revised_content,
+                final_critique,
                 output_dir,
-                is_single_section=False,
                 notebook_title=plan.title,
+                formats=["ipynb", "md"],
             )
 
         logger.info("Content generation complete")
@@ -390,6 +390,9 @@ def run_writer_test(
 def main():
     """
     Main function for running the WriterAgent test from the command line.
+
+    example:
+    python -m src.tests.test_writer --model gpt-4o --plan /Users/minhajul/personal/github/cookbook_agent/data/agents_sdk_synthetic_transcripts.md
     """
     parser = argparse.ArgumentParser(description="Test the WriterAgent")
     parser.add_argument(

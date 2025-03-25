@@ -5,17 +5,12 @@ This module is responsible for generating notebook content based on the plan cre
 It uses langgraph to create a workflow that includes the Writer LLM and the Critic LLM.
 """
 
-import os
-import json
 import logging
-import re
-import time
 from datetime import datetime
-from typing import Dict, List, Optional, Any, Union, Tuple, cast
+from typing import Dict, List, Optional, Any, Union, Tuple
 
 import openai
 from openai import OpenAI
-from openai.types.chat import ChatCompletion
 from openai.types.chat.chat_completion_message_param import ChatCompletionMessageParam
 from openai.types.chat.chat_completion_system_message_param import (
     ChatCompletionSystemMessageParam,
@@ -42,9 +37,6 @@ from langchain.prompts.chat import ChatPromptTemplate
 from src.models import (
     NotebookPlanModel,
     Section,
-    SubSection,
-    SearchQuery,
-    SearchQuestion,
     MultipleSearchQuestions,
     NotebookSectionContent,
     NotebookCell,
@@ -57,6 +49,7 @@ from src.prompts.writer_prompts import (
     WRITER_REVISION_PROMPT,
     SEARCH_DECISION_INITIAL_PROMPT,
     SEARCH_DECISION_POST_CRITIQUE_PROMPT,
+    WRITER_FINAL_REVISION_PROMPT,
 )
 from src.prompts.critic_prompts import (
     CRITIC_SYSTEM_PROMPT,
@@ -69,11 +62,14 @@ from src.format.format_utils import (
     format_previous_content,
     notebook_content_to_markdown,
     notebook_section_to_markdown,
+    format_cells_for_evaluation,
+    format_notebook_for_critique,
+    markdown_to_notebook_content,
 )
 from src.searcher import (
-    search_topic,
+    search_with_tavily,
     search_with_openai,
-    format_search_results as format_search_results_from_searcher,
+    format_tavily_search_results,
     format_openai_search_results,
 )
 
@@ -95,17 +91,29 @@ class WriterAgent:
     Agent for generating notebook content based on the plan created by the Planner LLM.
     """
 
-    def __init__(self, model: str = "gpt-4o"):
+    def __init__(
+        self,
+        model: str = "gpt-4o",
+        max_retries: int = 3,
+        search_enabled: bool = True,
+        final_critique_enabled: bool = True,
+    ):
         """
         Initialize the Writer Agent.
 
         Args:
             model (str, optional): The model to use for generating content. Defaults to "gpt-4o".
+            max_retries (int, optional): Maximum number of retries for content generation. Defaults to 3.
+            search_enabled (bool, optional): Whether to enable search functionality. Defaults to True.
+            final_critique_enabled (bool, optional): Whether to perform a final critique of the complete notebook. Defaults to True.
         """
         logger.info(f"Initializing WriterAgent with model: {model}")
 
-        # Set the model
+        # Set the model and configuration
         self.model = model
+        self.max_retries = max_retries
+        self.search_enabled = search_enabled
+        self.final_critique_enabled = final_critique_enabled
 
         # Create the OpenAI client
         try:
@@ -154,56 +162,113 @@ class WriterAgent:
             has_critic_feedback: bool
             search_decision_results: Optional[SearchDecision]
 
-        # Create the graph
+        # Create the workflow graph to manage the content generation process
         workflow = StateGraph(State)
 
-        # Add nodes
+        # Add nodes to the workflow
+        # 1. Initial decision node to determine if search is needed
         workflow.add_node("search_decision", self._search_decision_node)
+        # 2. Search node to gather information from external sources
         workflow.add_node("search", self._search_node)
+        # 3. Generate node to create initial content based on requirements and search results
         workflow.add_node("generate", self._generate_node)
+        # 4. Critic node to evaluate the quality of generated content
         workflow.add_node("critic", self._critic_node)
+        # 5. Revise node to improve content based on critic feedback
         workflow.add_node("revise", self._revise_node)
+        # 6. Second search decision node that runs after critic feedback
         workflow.add_node("search_decision_after_critic", self._search_decision_node)
+        # 7. Second search node that runs after critic feedback if needed
         workflow.add_node("search_after_critic", self._search_node)
 
-        # Add edges
+        # Define the workflow paths with edges
+        # Initial path: Decide whether to search first or go straight to content generation
         workflow.add_conditional_edges(
             "search_decision",
-            self._needs_search,
+            self._needs_search,  # Function that determines if search is needed
             {
-                True: "search",
-                False: "generate",
+                True: "search",  # If search needed, go to search node
+                False: "generate",  # If no search needed, go directly to generate node
             },
         )
+        # After search, always proceed to content generation
         workflow.add_edge("search", "generate")
+
+        # After generation, always evaluate the content with the critic
         workflow.add_edge("generate", "critic")
+
+        # After critic evaluation, either finish (if content is good) or continue revision process
         workflow.add_conditional_edges(
             "critic",
-            self._should_revise,
+            self._should_revise,  # Function that determines if revision is needed
             {
-                True: "search_decision_after_critic",
-                False: END,
+                True: "search_decision_after_critic",  # If revision needed, decide if more search is required
+                False: END,  # If no revision needed, end the workflow
             },
         )
 
+        # For revision path: First decide if additional search is needed based on critic feedback
         workflow.add_conditional_edges(
             "search_decision_after_critic",
-            self._needs_search,
+            self._needs_search,  # Reusing the same function to check if search is needed
             {
-                True: "search_after_critic",
-                False: "revise",
+                True: "search_after_critic",  # If more information needed, do another search
+                False: "revise",  # If no additional search needed, proceed directly to revision
             },
         )
 
+        # After post-critic search, proceed to revision
         workflow.add_edge("search_after_critic", "revise")
+
+        # After revision, go back to critic for re-evaluation (creating a feedback loop)
         workflow.add_edge("revise", "critic")
 
-        # Set the entry point
+        # Set the workflow's starting point
         workflow.set_entry_point("search_decision")
 
-        # Compile the workflow
+        # Finalize the workflow configuration
         logger.debug(f"Workflow created with nodes: {workflow.nodes}")
         return workflow
+
+    def _call_llm_with_parser(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        output_parser_cls: Any,
+        temperature: float = 0.5,
+    ) -> Any:
+        """
+        Generic method to call an LLM with structured output parsing.
+
+        Args:
+            system_prompt (str): The system prompt to use
+            user_prompt (str): The user prompt to use
+            output_parser_cls (Any): The Pydantic class to parse the output into
+            temperature (float, optional): Sampling temperature. Defaults to 0.5.
+
+        Returns:
+            Any: The parsed output object or None if parsing failed
+        """
+        try:
+            messages = [
+                ChatCompletionSystemMessageParam(content=system_prompt, role="system"),
+                ChatCompletionUserMessageParam(content=user_prompt, role="user"),
+            ]
+
+            logger.debug(f"Calling OpenAI API with {output_parser_cls.__name__} parser")
+            response = self.client.beta.chat.completions.parse(
+                model=self.model,
+                messages=messages,
+                response_format=output_parser_cls,
+                temperature=temperature,
+            )
+
+            return response.choices[0].message.parsed
+        except Exception as e:
+            logger.error(
+                f"Error calling LLM with {output_parser_cls.__name__} parser: {e}"
+            )
+            return None
 
     def _search_decision_node(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -239,6 +304,7 @@ class WriterAgent:
         # Determine which prompt to use based on presence of critic feedback
         has_critic_feedback = state.get("has_critic_feedback", False)
 
+        # Prepare the user prompt based on whether we have critic feedback
         if (
             has_critic_feedback
             and "evaluation" in state
@@ -253,7 +319,7 @@ class WriterAgent:
                 )
 
             # Format the prompt with critic feedback
-            prompt = SEARCH_DECISION_POST_CRITIQUE_PROMPT.format(
+            user_prompt = SEARCH_DECISION_POST_CRITIQUE_PROMPT.format(
                 current_month_year=current_month_year,
                 notebook_title=notebook_plan.title,
                 notebook_description=notebook_plan.description,
@@ -272,7 +338,7 @@ class WriterAgent:
         else:
             logger.info("Using initial prompt for search decision")
             # Format the prompt for initial search decision
-            prompt = SEARCH_DECISION_INITIAL_PROMPT.format(
+            user_prompt = SEARCH_DECISION_INITIAL_PROMPT.format(
                 current_month_year=current_month_year,
                 notebook_title=notebook_plan.title,
                 notebook_description=notebook_plan.description,
@@ -290,49 +356,39 @@ class WriterAgent:
                 ),
             )
 
-        # Create messages for the decision
-        messages = [
-            ChatCompletionSystemMessageParam(
-                content="You are an AI assistant that analyzes information needs and determines when additional searches are required to generate high-quality educational content about OpenAI APIs.",
-                role="system",
-            ),
-            ChatCompletionUserMessageParam(content=prompt, role="user"),
-        ]
+        # Create the system prompt for search decision
+        system_prompt = "You are an AI assistant that analyzes information needs and determines when additional searches are required to generate high-quality educational content about OpenAI APIs."
 
-        # Generate the search decision
-        try:
-            logger.debug("Calling OpenAI API to make search decision")
-            response = self.client.beta.chat.completions.parse(
-                model=self.model,
-                messages=messages,
-                response_format=SearchDecision,
-                temperature=0.3,
-            )
+        # Get the search decision using the generic LLM caller
+        search_decision_results = self._call_llm_with_parser(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            output_parser_cls=SearchDecision,
+            temperature=0,
+        )
 
-            # Get the parsed decision
-            search_decision_results = response.choices[0].message.parsed
-            if search_decision_results:
-                logger.info(
-                    f"Search decision: needs_additional_search={search_decision_results.needs_additional_search}"
-                )
-                if (
-                    search_decision_results.needs_additional_search
-                    and search_decision_results.search_queries
-                ):
-                    logger.info(
-                        f"Generated {len(search_decision_results.search_queries)} search queries"
-                    )
-                    for i, query in enumerate(search_decision_results.search_queries):
-                        logger.info(f"Query {i+1}: {query.search_query}")
-                        logger.debug(f"Justification: {query.justification}")
-        except Exception as e:
-            logger.error(f"Failed to generate search decision: {e}")
-            # Create a default decision as fallback
+        # Create a default decision as fallback if needed
+        if not search_decision_results:
             search_decision_results = SearchDecision(
                 needs_additional_search=True,
                 reasoning="Error generating search decision, defaulting to performing a search",
                 search_queries=None,
             )
+        else:
+            # Log the decision results
+            logger.info(
+                f"Search decision: needs_additional_search={search_decision_results.needs_additional_search}"
+            )
+            if (
+                search_decision_results.needs_additional_search
+                and search_decision_results.search_queries
+            ):
+                logger.info(
+                    f"Generated {len(search_decision_results.search_queries)} search queries"
+                )
+                for i, query in enumerate(search_decision_results.search_queries):
+                    logger.info(f"Query {i+1}: {query.search_query}")
+                    logger.debug(f"Justification: {query.justification}")
 
         # Store the decision in the state
         state["search_decision_results"] = search_decision_results
@@ -355,6 +411,11 @@ class WriterAgent:
         Returns:
             bool: True if a search should be performed, False otherwise.
         """
+        # First check if search is globally disabled
+        if not self.search_enabled:
+            logger.info("Search is disabled by configuration, skipping search")
+            return False
+
         # Check if we have a search decision
         if (
             "search_decision_results" not in state
@@ -379,6 +440,7 @@ class WriterAgent:
 
         This function uses search queries from the search decision if available,
         or generates new questions and searches for information.
+        It appends new search results to existing ones.
 
         Args:
             state (Dict[str, Any]): The current state.
@@ -394,6 +456,7 @@ class WriterAgent:
         section = state["current_section"]
 
         all_search_results = []
+        search_queries = []
 
         # Check if we have search queries from the search decision
         if (
@@ -403,128 +466,86 @@ class WriterAgent:
         ):
             # Use the search queries from the decision
             logger.info("Using search queries from search decision")
-
             search_queries = state["search_decision_results"].search_queries
-            for i, query in enumerate(search_queries):
-                logger.info(
-                    f"Searching for information with query {i+1}: {query.search_query}"
-                )
-
-                try:
-                    # Search for information using OpenAI
-                    search_results = search_with_openai(
-                        topic=query.search_query,
-                        model=self.model,
-                        client=self.client,  # Pass the existing client
-                    )
-                    formatted_results = format_openai_search_results(search_results)
-                    logger.debug(f"OpenAI search completed for query {i+1}")
-
-                    # Add the query to the results
-                    query_with_results = {
-                        "question": query.search_query,
-                        "justification": query.justification,
-                        "search_results": formatted_results,
-                    }
-
-                    all_search_results.append(query_with_results)
-                except Exception as e:
-                    logger.error(
-                        f"Failed to search for information for query {i+1}: {e}"
-                    )
-                    query_with_results = {
-                        "question": query.search_query,
-                        "justification": query.justification,
-                        "search_results": f"Error searching for information: {str(e)}",
-                    }
-                    all_search_results.append(query_with_results)
         else:
             # Generate new questions if no search queries provided
             logger.info("No search queries from search decision, generating questions")
+            search_queries = self._generate_search_questions(section)
 
-            # Number of questions to generate
-            num_questions = 3  # Can be adjusted as needed
+        # Execute searches for all queries
+        for i, query in enumerate(search_queries):
+            query_text = getattr(query, "search_query", None) or getattr(
+                query, "question", None
+            )
+            justification = getattr(query, "justification", "No justification provided")
 
-            # Step 1: Generate N specific questions about the topic
-            questions_prompt = [
-                ChatCompletionSystemMessageParam(
-                    content="You are an AI assistant that helps create specific questions for finding information about various topics.",
-                    role="system",
-                ),
-                ChatCompletionUserMessageParam(
-                    content=f"Create {num_questions} specific questions to find detailed information about the following topic: {section.title}. The section description is: {section.description}.\n\n{format_subsections_details(section.subsections)}\n\nGenerate questions that would help gather comprehensive information for creating educational content about this topic and its subsections.",
-                    role="user",
-                ),
-            ]
+            if not query_text:
+                logger.warning(f"Query {i+1} has no searchable text, skipping")
+                continue
 
-            # Generate the questions
+            logger.info(f"Searching for information with query {i+1}: {query_text}")
+
             try:
-                structured_questions = self.client.beta.chat.completions.parse(
+                # Search for information using OpenAI
+                search_results = search_with_openai(
+                    search_query=query_text,
                     model=self.model,
-                    messages=questions_prompt,
-                    response_format=MultipleSearchQuestions,
-                    temperature=0.3,
+                    client=self.client,  # Pass the existing client
                 )
-                search_questions = structured_questions.choices[0].message.parsed
-                if search_questions and search_questions.questions:
-                    logger.info(
-                        f"Generated {len(search_questions.questions)} questions"
-                    )
-                    for i, q in enumerate(search_questions.questions):
-                        logger.info(f"Question {i+1}: {q.question}")
-                        logger.debug(f"Justification: {q.justification}")
-                else:
-                    logger.error("Failed to generate valid search questions")
-                    state["search_results"] = (
-                        "Error generating search questions: No valid questions generated"
-                    )
-                    return state
+                formatted_results = format_openai_search_results(search_results)
+                logger.debug(f"OpenAI search completed for query {i+1}")
+
+                # Add the query to the results
+                query_with_results = {
+                    "question": query_text,
+                    "justification": justification,
+                    "search_results": formatted_results,
+                }
+
+                all_search_results.append(query_with_results)
             except Exception as e:
-                logger.error(f"Failed to generate search questions: {e}")
-                state["search_results"] = "Error generating search questions"
-                return state
+                logger.error(f"Failed to search for information for query {i+1}: {e}")
+                query_with_results = {
+                    "question": query_text,
+                    "justification": justification,
+                    "search_results": f"Error searching for information: {str(e)}",
+                }
+                all_search_results.append(query_with_results)
 
-            # Step 2: Search for answers to each question
-            for i, question in enumerate(search_questions.questions):
-                logger.info(
-                    f"Searching for information about question {i+1}: {question.question}"
+        # Format new search results
+        new_results = self._format_combined_search_results(all_search_results)
+
+        # Get existing search results, if any
+        existing_results = state.get("search_results", "")
+
+        # Append new results to existing results if there are existing results
+        if (
+            existing_results
+            and existing_results != "No search results found"
+            and existing_results != "No existing search results"
+        ):
+            # Strip the "# Combined Search Results" header from the new results to avoid duplication
+            if new_results.startswith("# Search Results"):
+                new_results_content = (
+                    new_results.split("\n\n", 1)[1] if "\n\n" in new_results else ""
                 )
+            else:
+                new_results_content = new_results
 
-                try:
-                    # Search for information using OpenAI
-                    search_results = search_with_openai(
-                        topic=question.question,
-                        model=self.model,
-                        client=self.client,  # Pass the existing client
-                    )
-                    formatted_results = format_openai_search_results(search_results)
-                    logger.debug(f"OpenAI search completed for question {i+1}")
+            # Add a separator between existing and new results
+            combined_results = (
+                existing_results.rstrip()
+                + "\n\n## Additional Search Results\n\n"
+                + new_results_content
+            )
+        else:
+            combined_results = new_results
 
-                    # Add the question to the results
-                    question_with_results = {
-                        "question": question.question,
-                        "justification": question.justification,
-                        "search_results": formatted_results,
-                    }
-
-                    all_search_results.append(question_with_results)
-                except Exception as e:
-                    logger.error(
-                        f"Failed to search for information for question {i+1}: {e}"
-                    )
-                    question_with_results = {
-                        "question": question.question,
-                        "justification": question.justification,
-                        "search_results": f"Error searching for information: {str(e)}",
-                    }
-                    all_search_results.append(question_with_results)
-
-        # Step 3: Format all results together
-        combined_results = self._format_combined_search_results(all_search_results)
-
-        # Update the state
+        # Update the state with combined results
         state["search_results"] = combined_results
-        logger.debug("Search node completed successfully")
+        logger.debug(
+            f"Search node completed successfully with new search results appended"
+        )
         return state
 
     def _format_combined_search_results(self, all_results: List[Dict[str, str]]) -> str:
@@ -540,9 +561,11 @@ class WriterAgent:
         if not all_results:
             return "No search results found"
 
-        formatted = "# Combined Search Results\n\n"
+        formatted = "# Search Results\n\n"
 
+        # Format each search result
         for i, result in enumerate(all_results, 1):
+            # Format question with number
             formatted += f"## Question {i}: {result['question']}\n"
             formatted += f"*Justification: {result['justification']}*\n\n"
             formatted += f"{result['search_results']}\n\n"
@@ -568,7 +591,7 @@ class WriterAgent:
         previous_content = state.get("previous_content", {})
 
         # Format the prompt
-        prompt = WRITER_CONTENT_PROMPT.format(
+        user_prompt = WRITER_CONTENT_PROMPT.format(
             notebook_title=notebook_plan.title,
             notebook_description=notebook_plan.description,
             notebook_purpose=notebook_plan.purpose,
@@ -583,39 +606,22 @@ class WriterAgent:
             previous_content=format_previous_content(previous_content),
         )
         logger.debug(
-            f"Formatted content generation prompt with {len(prompt)} characters"
+            f"Formatted content generation prompt with {len(user_prompt)} characters"
         )
 
-        # Generate the content
-        messages = [
-            ChatCompletionSystemMessageParam(
-                content=WRITER_SYSTEM_PROMPT, role="system"
-            ),
-            ChatCompletionUserMessageParam(content=prompt, role="user"),
-        ]
+        # Generate the content using the generic LLM call method
+        section_content = self._call_llm_with_parser(
+            system_prompt=WRITER_SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            output_parser_cls=NotebookSectionContent,
+            temperature=0.5,
+        )
 
-        # Use structured output to get the notebook section content
-        try:
-            logger.debug("Calling OpenAI API to generate content")
-            response = self.client.beta.chat.completions.parse(
-                model=self.model,
-                messages=messages,
-                response_format=NotebookSectionContent,
-                temperature=0.5,
+        # Create an empty section content as fallback if needed
+        if not section_content or not hasattr(section_content, "cells"):
+            logger.error(
+                f"Failed to generate valid content for section: {section.title}"
             )
-
-            # Get the parsed section content
-            section_content = response.choices[0].message.parsed
-            if section_content and hasattr(section_content, "cells"):
-                logger.info(
-                    f"Generated content with {len(section_content.cells)} cells"
-                )
-                logger.debug(
-                    f"Content types: {[cell.cell_type for cell in section_content.cells]}"
-                )
-        except Exception as e:
-            logger.error(f"Failed to generate content: {e}")
-            # Create an empty section content as fallback
             section_content = NotebookSectionContent(
                 section_title=section.title,
                 cells=[
@@ -624,6 +630,11 @@ class WriterAgent:
                         content=f"Error generating content for section: {section.title}",
                     )
                 ],
+            )
+        else:
+            logger.info(f"Generated content with {len(section_content.cells)} cells")
+            logger.debug(
+                f"Content types: {[cell.cell_type for cell in section_content.cells]}"
             )
 
         # Update the state
@@ -649,13 +660,13 @@ class WriterAgent:
         generated_content = state["generated_content"]
 
         # Format the generated content for evaluation
-        formatted_content = self._format_cells_for_evaluation(generated_content.cells)
+        formatted_content = format_cells_for_evaluation(generated_content.cells)
         logger.debug(
             f"Formatted content for evaluation with {len(formatted_content)} characters"
         )
 
         # Format the prompt
-        prompt = CRITIC_EVALUATION_PROMPT.format(
+        user_prompt = CRITIC_EVALUATION_PROMPT.format(
             notebook_title=notebook_plan.title,
             notebook_description=notebook_plan.description,
             notebook_purpose=notebook_plan.purpose,
@@ -669,31 +680,22 @@ class WriterAgent:
             generated_content=formatted_content,
         )
 
-        # Evaluate the content
-        messages = [
-            ChatCompletionSystemMessageParam(
-                content=CRITIC_SYSTEM_PROMPT, role="system"
-            ),
-            ChatCompletionUserMessageParam(content=prompt, role="user"),
-        ]
+        # Evaluate the content using the generic LLM call method
+        evaluation = self._call_llm_with_parser(
+            system_prompt=CRITIC_SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            output_parser_cls=CriticEvaluation,
+            temperature=0,
+        )
 
-        # Get the evaluation
-        try:
-            logger.debug("Calling Critic LLM to evaluate content")
-            response = self.client.beta.chat.completions.parse(
-                model=self.model,
-                messages=messages,
-                response_format=CriticEvaluation,
-                temperature=0,
-            )
-            evaluation = response.choices[0].message.parsed
-            logger.info(f"Evaluation: {evaluation}")
-        except Exception as e:
-            logger.error(f"Failed to evaluate content: {e}")
-            # Create a default evaluation as fallback
+        # Create a default evaluation as fallback if needed
+        if not evaluation:
+            logger.error(f"Failed to get valid evaluation for section: {section.title}")
             evaluation = CriticEvaluation(
                 rationale="Error evaluating content", passed=False
             )
+        else:
+            logger.info(f"Evaluation: {evaluation}")
 
         # Update the state with evaluation
         state["evaluation"] = evaluation
@@ -739,13 +741,13 @@ class WriterAgent:
         evaluation = state["evaluation"]
 
         # Format the generated content for revision
-        formatted_content = self._format_cells_for_evaluation(generated_content.cells)
+        formatted_content = format_cells_for_evaluation(generated_content.cells)
         logger.debug(
             f"Formatted content for revision with {len(formatted_content)} characters"
         )
 
         # Create the revision prompt
-        revision_prompt = WRITER_REVISION_PROMPT.format(
+        user_prompt = WRITER_REVISION_PROMPT.format(
             notebook_title=notebook_plan.title,
             notebook_description=notebook_plan.description,
             notebook_purpose=notebook_plan.purpose,
@@ -757,36 +759,24 @@ class WriterAgent:
             search_results=state.get("search_results", "No search results available"),
         )
 
-        # Generate the revised content
-        messages = [
-            ChatCompletionSystemMessageParam(
-                content=WRITER_SYSTEM_PROMPT, role="system"
-            ),
-            ChatCompletionUserMessageParam(content=revision_prompt, role="user"),
-        ]
+        # Generate the revised content using the generic LLM call method
+        section_content = self._call_llm_with_parser(
+            system_prompt=WRITER_SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            output_parser_cls=NotebookSectionContent,
+            temperature=0.3,
+        )
 
-        # Use structured output to get the revised notebook section content
-        try:
-            logger.debug("Calling OpenAI API to revise content")
-            response = self.client.beta.chat.completions.parse(
-                model=self.model,
-                messages=messages,
-                response_format=NotebookSectionContent,
-                temperature=0.3,
-            )
-
-            # Get the parsed section content
-            section_content = response.choices[0].message.parsed
-            if section_content and hasattr(section_content, "cells"):
-                logger.info(f"Revised content with {len(section_content.cells)} cells")
-                logger.debug(
-                    f"Revised content types: {[cell.cell_type for cell in section_content.cells]}"
-                )
-        except Exception as e:
-            logger.error(f"Failed to revise content: {e}")
-            # Keep the original content as fallback
-            section_content = generated_content
+        # Use original content as fallback if revision fails
+        if not section_content or not hasattr(section_content, "cells"):
+            logger.error(f"Failed to revise content for section: {section.title}")
             logger.warning("Using original content as fallback due to revision error")
+            section_content = generated_content
+        else:
+            logger.info(f"Revised content with {len(section_content.cells)} cells")
+            logger.debug(
+                f"Revised content types: {[cell.cell_type for cell in section_content.cells]}"
+            )
 
         # Update the state
         state["generated_content"] = section_content
@@ -852,7 +842,6 @@ class WriterAgent:
         section_index: int,
         additional_requirements: Optional[Union[List[str], Dict[str, Any]]] = None,
         previous_content: Optional[Dict[str, str]] = None,
-        max_retries: int = 3,
     ) -> NotebookSectionContent:
         """
         Generate content for a specific section of the notebook.
@@ -862,7 +851,6 @@ class WriterAgent:
             section_index (int): The index of the section to generate content for.
             additional_requirements (Optional[Union[List[str], Dict[str, Any]]], optional): Additional requirements for the content. Defaults to None.
             previous_content (Optional[Dict[str, str]], optional): Content from previous sections. Defaults to None.
-            max_retries (int, optional): Maximum number of retries for content generation. Defaults to 3.
 
         Returns:
             NotebookSectionContent: The generated content.
@@ -885,7 +873,7 @@ class WriterAgent:
             "evaluation": None,
             "final_content": None,
             "previous_content": previous_content or {},
-            "max_retries": max_retries,
+            "max_retries": self.max_retries,
             "current_retries": 0,
             "has_critic_feedback": False,
             "search_decision_results": None,
@@ -937,7 +925,6 @@ class WriterAgent:
                 )
 
         final_content = result["final_content"]
-        # print("final_content", final_content)
 
         logger.info(
             f"Generated content for section {section_index + 1} with "
@@ -945,22 +932,100 @@ class WriterAgent:
         )
         return final_content
 
+    def _final_revision(
+        self,
+        notebook_plan: NotebookPlanModel,
+        section_contents: List[NotebookSectionContent],
+        final_critique: str,
+    ) -> List[NotebookSectionContent]:
+        """
+        Apply final revisions to the notebook based on critique.
+
+        This method takes the complete notebook content and the final critique,
+        generates a revised version in markdown format, and then converts it
+        back into the structured NotebookSectionContent format.
+
+        Args:
+            notebook_plan (NotebookPlanModel): The notebook plan.
+            section_contents (List[NotebookSectionContent]): The generated content for all sections.
+            final_critique (str): The critique of the notebook from the final review.
+
+        Returns:
+            List[NotebookSectionContent]: The revised notebook content.
+        """
+        logger.info("Performing final revision of the notebook based on critique")
+
+        # Format all sections into a single notebook representation
+        formatted_notebook = format_notebook_for_critique(
+            notebook_plan, section_contents
+        )
+
+        # Prepare the input for the Responses API
+        user_prompt = WRITER_FINAL_REVISION_PROMPT.format(
+            notebook_title=notebook_plan.title,
+            notebook_description=notebook_plan.description,
+            notebook_purpose=notebook_plan.purpose,
+            notebook_target_audience=notebook_plan.target_audience,
+            notebook_content=formatted_notebook,
+            final_critique=final_critique,
+        )
+
+        try:
+            logger.debug("Calling OpenAI Responses API for final notebook revision")
+
+            response = self.client.responses.create(
+                model="gpt-4o",  # Use the specified model
+                input=user_prompt,
+                temperature=0,  # Zero temperature for deterministic output
+            )
+
+            # Extract the revised markdown content
+            revised_markdown = response.output_text
+            if revised_markdown is None:
+                logger.warning(
+                    "Received None response from API, using original notebook"
+                )
+                # Return the original content if we get None back
+                return section_contents
+
+            logger.info("Generated revised notebook in markdown format")
+
+            # Convert markdown back to NotebookSectionContent objects
+            revised_sections = markdown_to_notebook_content(revised_markdown)
+            logger.info(
+                f"Converted revised markdown to {len(revised_sections)} sections"
+            )
+
+            return revised_sections
+
+        except Exception as e:
+            logger.error(f"Failed to generate final revision: {e}")
+            # Return the original content if revision fails
+            logger.warning("Returning original content due to revision error")
+            return section_contents
+
     def generate_content(
         self,
         notebook_plan: NotebookPlanModel,
         additional_requirements: Optional[Union[List[str], Dict[str, Any]]] = None,
-        max_retries: int = 3,
-    ) -> List[NotebookSectionContent]:
+    ) -> Union[
+        List[NotebookSectionContent],
+        Tuple[List[NotebookSectionContent], str, List[NotebookSectionContent]],
+    ]:
         """
         Generate content for all sections of the notebook.
 
         Args:
             notebook_plan (NotebookPlanModel): The notebook plan.
             additional_requirements (Optional[Union[List[str], Dict[str, Any]]], optional): Additional requirements for the content. Defaults to None.
-            max_retries (int, optional): Maximum number of retries for content generation. Defaults to 3.
 
         Returns:
-            List[NotebookSectionContent]: The generated content for all sections.
+            Union[
+                List[NotebookSectionContent],
+                Tuple[List[NotebookSectionContent], str, List[NotebookSectionContent]]
+            ]:
+                If final_critique_enabled is False: The generated content for all sections.
+                If final_critique_enabled is True: A tuple of (original content, final critique, revised content).
         """
         logger.info(f"Generating content for notebook: {notebook_plan.title}")
         logger.info(f"Notebook has {len(notebook_plan.sections)} sections")
@@ -983,7 +1048,6 @@ class WriterAgent:
                 section_index=i,
                 additional_requirements=additional_requirements,
                 previous_content=previous_content,
-                max_retries=max_retries,
             )
 
             # Add the section content to the list
@@ -997,47 +1061,31 @@ class WriterAgent:
         logger.info(
             f"Content generation completed for all {len(notebook_plan.sections)} sections"
         )
+
+        # If final critique is enabled, generate it and apply final revisions
+        if self.final_critique_enabled:
+            # Generate the final critique
+            final_critique = self._final_critique(notebook_plan, section_contents)
+            logger.info("Final critique completed")
+
+            # Print the critique to the console for review
+            print("\n==== FINAL NOTEBOOK CRITIQUE ====\n")
+            print(final_critique)
+            print("\n================================\n")
+
+            # Save the original content before applying revisions
+            original_content = section_contents.copy()
+
+            # Apply final revisions based on the critique
+            revised_content = self._final_revision(
+                notebook_plan, section_contents, final_critique
+            )
+            logger.info("Final revision completed")
+
+            # Return the original content, critique, and revised content as a tuple
+            return original_content, final_critique, revised_content
+
         return section_contents
-
-    def generate_content_with_final_critique(
-        self,
-        notebook_plan: NotebookPlanModel,
-        additional_requirements: Optional[Union[List[str], Dict[str, Any]]] = None,
-        max_retries: int = 3,
-    ) -> Tuple[List[NotebookSectionContent], str]:
-        """
-        Generate content for all sections of the notebook and perform a final critique.
-
-        Args:
-            notebook_plan (NotebookPlanModel): The notebook plan.
-            additional_requirements (Optional[Union[List[str], Dict[str, Any]]], optional): Additional requirements for the content. Defaults to None.
-            max_retries (int, optional): Maximum number of retries for content generation. Defaults to 3.
-
-        Returns:
-            Tuple[List[NotebookSectionContent], str]: The generated content for all sections and the final critique.
-        """
-        logger.info(
-            f"Generating content with final critique for notebook: {notebook_plan.title}"
-        )
-
-        # Generate all section contents
-        section_contents = self.generate_content(
-            notebook_plan=notebook_plan,
-            additional_requirements=additional_requirements,
-            max_retries=max_retries,
-        )
-
-        # Perform final critique on the complete notebook
-        final_critique = self._final_critique(notebook_plan, section_contents)
-
-        logger.info("Final critique completed")
-
-        # Print the critique to the console for review
-        print("\n==== FINAL NOTEBOOK CRITIQUE ====\n")
-        print(final_critique)
-        print("\n================================\n")
-
-        return section_contents, final_critique
 
     def _final_critique(
         self,
@@ -1057,23 +1105,26 @@ class WriterAgent:
         logger.info("Performing final critique of the complete notebook")
 
         # Format all sections into a single notebook representation
-        formatted_notebook = self._format_notebook_for_critique(
+        formatted_notebook = format_notebook_for_critique(
             notebook_plan, section_contents
         )
 
-        # Use the Responses API with reasoning effort high
+        # Prepare input for the critique
+        input_text = f"{FINAL_CRITIQUE_PROMPT}\n\n### Notebook to Evaluate:\n{formatted_notebook}"
+
+        # Use the Responses API for deeper reasoning
         try:
             logger.debug("Calling OpenAI Responses API for final critique")
             response = self.client.responses.create(
                 model="o1",  # Use default model o1 as specified
-                input=f"{FINAL_CRITIQUE_PROMPT}\n\n### Notebook to Evaluate:\n{formatted_notebook}",
+                input=input_text,
                 reasoning={"effort": "high"},
             )
 
             # Extract the critique - ensure it's a string
             final_critique = (
-                str(response.text)
-                if response.text is not None
+                str(response.output_text)
+                if response.output_text is not None
                 else "No critique was generated"
             )
             logger.info("Final critique generated successfully")
@@ -1083,36 +1134,49 @@ class WriterAgent:
             logger.error(f"Failed to generate final critique: {e}")
             return f"Error generating final critique: {str(e)}"
 
-    def _format_notebook_for_critique(
-        self,
-        notebook_plan: NotebookPlanModel,
-        section_contents: List[NotebookSectionContent],
-    ) -> str:
+    def _generate_search_questions(self, section: Section) -> List[Any]:
         """
-        Format the notebook sections for the final critique using existing format utility functions.
+        Generate questions for searching information about a topic.
 
         Args:
-            notebook_plan (NotebookPlanModel): The notebook plan.
-            section_contents (List[NotebookSectionContent]): The generated content for all sections.
+            section (Section): The section to generate questions for.
 
         Returns:
-            str: The formatted notebook.
+            List[Any]: List of SearchQuestion objects.
         """
-        logger.debug("Formatting notebook for final critique")
+        # Number of questions to generate
+        num_questions = 3  # Can be adjusted as needed
 
-        # Start with notebook metadata
-        formatted = f"# {notebook_plan.title}\n\n"
-        formatted += f"**Description:** {notebook_plan.description}\n\n"
-        formatted += f"**Purpose:** {notebook_plan.purpose}\n\n"
-        formatted += f"**Target Audience:** {notebook_plan.target_audience}\n\n"
-        formatted += "---\n\n"
+        # Generate specific questions about the topic
+        questions_prompt = [
+            ChatCompletionSystemMessageParam(
+                content="You are an AI assistant that helps create specific questions for finding information about various topics.",
+                role="system",
+            ),
+            ChatCompletionUserMessageParam(
+                content=f"Create {num_questions} specific questions to find detailed information about the following topic: {section.title}. The section description is: {section.description}.\n\n{format_subsections_details(section.subsections)}\n\nGenerate questions that would help gather comprehensive information for creating educational content about this topic and its subsections.",
+                role="user",
+            ),
+        ]
 
-        # Add section headers for each section before including content
-        for i, (section, content) in enumerate(
-            zip(notebook_plan.sections, section_contents)
-        ):
-            formatted += f"## Section {i+1}: {section.title}\n\n"
-            formatted += notebook_section_to_markdown(content)
-            formatted += "\n---\n\n"
-
-        return formatted
+        # Generate the questions
+        try:
+            structured_questions = self.client.beta.chat.completions.parse(
+                model=self.model,
+                messages=questions_prompt,
+                response_format=MultipleSearchQuestions,
+                temperature=0.3,
+            )
+            search_questions = structured_questions.choices[0].message.parsed
+            if search_questions and search_questions.questions:
+                logger.info(f"Generated {len(search_questions.questions)} questions")
+                for i, q in enumerate(search_questions.questions):
+                    logger.info(f"Question {i+1}: {q.question}")
+                    logger.debug(f"Justification: {q.justification}")
+                return search_questions.questions
+            else:
+                logger.error("Failed to generate valid search questions")
+                return []
+        except Exception as e:
+            logger.error(f"Failed to generate search questions: {e}")
+            return []

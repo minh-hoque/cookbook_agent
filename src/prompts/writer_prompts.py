@@ -5,23 +5,6 @@ This module contains the prompt templates used by the Writer LLM to generate
 notebook content based on the plan created by the Planner LLM.
 """
 
-# Web search prompt for detailed API information with code examples
-WEB_SEARCH_PROMPT = """
-When searching for information, provide detailed, clear, and comprehensive answers that directly address the query. 
-
-Focus on:
-1. Providing accurate and up-to-date information relevant to the query
-2. Including practical code examples in Python whenever the topic involves programming or APIs
-4. Including version information and noting any recent changes or deprecations for software-related topics
-5. Organizing information in a structured, easy-to-understand format
-6. Citing official documentation and reliable sources
-
-When searching for information about OpenAI APIs, provide code, examples, and explanations based on the official OpenAI API documentation.
-Do not include information that is not available in the official OpenAI API documentation.
-
-This information will be used to create educational Python notebooks, so clarity, accuracy, and depth are essential.
-"""
-
 WRITER_SYSTEM_PROMPT = """
 You are an AI assistant that specializes in writing educational Jupyter notebooks about OpenAI APIs.
 
@@ -323,4 +306,68 @@ Re-evaluate whether additional searches are needed after receiving critique on t
 - Are there recent changes to the API (as of {current_month_year}) that should be addressed?
 
 Please respond with a structured decision and justification, focusing on how additional searches would address the specific issues raised by the critic.
+"""
+
+WRITER_FINAL_REVISION_PROMPT = """
+### **Task:**
+Apply final revisions to a complete Jupyter notebook based on a comprehensive critique.
+
+---
+
+### **Notebook Details:**
+- **Title:** {notebook_title}
+- **Description:** {notebook_description}
+- **Purpose:** {notebook_purpose}
+- **Target Audience:** {notebook_target_audience}
+
+### **Original Notebook Content:**
+{notebook_content}
+
+### **Final Critique:**
+{final_critique}
+
+---
+
+### **Final Revision Instructions:**
+
+1. **Analyze the Critique:**
+   - Carefully review the final critique to identify key improvement areas.
+   - Focus on structural, content, and presentational issues that need attention.
+
+2. **Improve Overall Coherence and Flow:**
+   - Ensure smooth transitions between sections and topics.
+   - Address any logical progression issues highlighted in the critique.
+   - Check that concepts are introduced before they are used.
+
+3. **Refine Technical Accuracy:**
+   - Correct any technical errors or outdated information.
+   - Ensure code examples follow current best practices for OpenAI APIs.
+   - Verify all API parameters and responses are accurate.
+
+4. **Enhance Educational Value:**
+   - Clarify explanations where the critique indicates confusion.
+   - Add missing context that would improve understanding.
+   - Ensure examples and code snippets are properly explained.
+
+5. **Polish Formatting and Presentation:**
+   - Standardize formatting across the entire notebook.
+   - Ensure consistent heading levels, code styling, and terminology.
+   - Improve readability through better paragraph structure and bullet points where appropriate.
+
+6. **Maintain Original Structure:**
+   - Preserve the original sections and their order.
+   - Keep the core content intact while improving its presentation.
+   - Don't add entirely new sections unless explicitly mentioned in the critique.
+
+7. **Preserve Code Functionality:**
+   - Ensure all revised code maintains its original functionality.
+   - Improve code quality without changing its intended purpose.
+   - Add better comments or documentation where needed.
+
+### **Output Format:**
+Provide the complete revised notebook in Markdown format. Maintain clear section demarcations and ensure code blocks are properly formatted with ```python tags.
+
+The output should be structured as a complete, cohesive notebook document that could be converted back to the original notebook format.
+
+Revised Notebook:
 """
