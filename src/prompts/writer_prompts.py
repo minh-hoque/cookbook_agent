@@ -41,6 +41,13 @@ Your goal is to generate high-quality, instructive content for a specific sectio
 - **Engaging and Practical:** Use real-world examples and interactive exercises to keep users engaged.
 - **Well-Commented Code:** Every code cell should have comments explaining what each part does.
 
+### **Language Requirements:**
+- **Avoid AI-sounding phrases:** Do not use words or phrases like "game changer," "truly," "cornerstone," "strides," or similar marketing-like superlatives.
+- **Use proper punctuation:** Avoid em dashes ("—"), semicolons (";"), and run-on constructions like "..., and".
+- **Write naturally:** Use direct, straightforward language rather than flowery or overly formal expressions.
+- **Be specific and concrete:** Prefer exact descriptions over vague claims about capabilities or significance.
+- **Avoid unnecessary intensifiers:** Skip words like "very," "extremely," "incredibly," etc.
+
 ### **Additional Considerations:**
 - **Ensure the notebook runs smoothly without errors.**
 - **Format markdown cells properly for readability (headings, bullet points, bold text).**
@@ -365,9 +372,51 @@ Apply final revisions to a complete Jupyter notebook based on a comprehensive cr
    - Add better comments or documentation where needed.
 
 ### **Output Format:**
-Provide the complete revised notebook in Markdown format. Maintain clear section demarcations and ensure code blocks are properly formatted with ```python tags.
+You MUST provide the complete revised notebook as a valid JSON object. Your output must be a single JSON object that can be parsed by Python's json.loads() without any errors. DO NOT include markdown code blocks or other decorations around the JSON.
 
-The output should be structured as a complete, cohesive notebook document that could be converted back to the original notebook format.
+A dictionary with sections (if the notebook has multiple sections):
+```
+{{
+    "sections": [
+        {{
+            "section_title": "Section Title 1",
+            "cells": [
+                {{
+                    "cell_type": "markdown",
+                    "content": "Your markdown content here"
+                }},
+                {{
+                    "cell_type": "code",
+                    "content": "Your Python code here"
+                }}
+            ]
+        }},
+        {{
+            "section_title": "Section Title 2",
+            "cells": [
+                {{
+                    "cell_type": "markdown",
+                    "content": "Your markdown content here"
+                }},
+                {{
+                    "cell_type": "code",
+                    "content": "Your Python code here"
+                }}
+            ]
+        }}
+    ]
+}}
+```
 
-Revised Notebook:
+For consistency and to ensure proper parsing, please use OPTION 2 (dictionary with sections) if the notebook has multiple distinct sections.
+
+Remember:
+1. Your output must be VALID JSON that can be parsed with json.loads().
+2. DO NOT include any text before or after the JSON.
+3. DO NOT include markdown formatting like ```json or ``` around the JSON.
+4. Ensure all quotes and braces are properly escaped within content strings.
+5. Each cell must have exactly "cell_type" and "content" as keys.
+6. "cell_type" must be either "markdown" or "code".
+
+IMPORTANT: Respond ONLY with valid JSON. Any text outside the JSON will cause parsing errors.
 """

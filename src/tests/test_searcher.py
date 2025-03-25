@@ -12,7 +12,7 @@ import unittest
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
 
-from src.searcher import format_search_results
+from src.searcher import format_tavily_search_results
 
 
 class TestSearcher(unittest.TestCase):
@@ -44,7 +44,7 @@ class TestSearcher(unittest.TestCase):
         }
 
         # Format the results
-        formatted_results = format_search_results(search_results)
+        formatted_results = format_tavily_search_results(search_results)
 
         # Verify the formatting
         self.assertIsInstance(formatted_results, str)
@@ -64,7 +64,7 @@ class TestSearcher(unittest.TestCase):
         }
 
         # Format the results
-        formatted_results = format_search_results(search_results)
+        formatted_results = format_tavily_search_results(search_results)
 
         # Verify the formatting
         self.assertIsInstance(formatted_results, str)
@@ -86,7 +86,7 @@ class TestSearcher(unittest.TestCase):
         }
 
         # Format the results
-        formatted_results = format_search_results(search_results)
+        formatted_results = format_tavily_search_results(search_results)
 
         # Verify the formatting
         self.assertIsInstance(formatted_results, str)
@@ -98,14 +98,14 @@ def run_interactive_test():
     Run an interactive test of the searcher functions.
     This is useful for manual testing and debugging.
     """
-    from src.searcher import search_with_taviley
+    from src.searcher import search_with_tavily
 
     print("Running interactive test of searcher functions...")
 
     # Test search_topic function if API key is available
     try:
         print("\nSearching for 'OpenAI API tutorial'...")
-        results = search_with_taviley("OpenAI API tutorial", max_results=3)
+        results = search_with_tavily("OpenAI API tutorial", max_results=3)
 
         print(f"\nSearch query: {results.get('query')}")
         print(
@@ -121,7 +121,7 @@ def run_interactive_test():
 
         # Test format_search_results function
         print("\nFormatted search results:")
-        formatted = format_search_results(results)
+        formatted = format_tavily_search_results(results)
         print(formatted)
 
     except Exception as e:

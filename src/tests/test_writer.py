@@ -370,9 +370,9 @@ def run_writer_test(
             )
 
             save_notebook_versions(
-                original_content,
-                revised_content,
-                final_critique,
+                original_content,  # type: ignore
+                revised_content,  # type: ignore
+                final_critique,  # type: ignore
                 output_dir,
                 notebook_title=plan.title,
                 formats=["ipynb", "md"],

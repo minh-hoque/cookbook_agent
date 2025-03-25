@@ -8,6 +8,7 @@ It uses langgraph to create a workflow that includes the Writer LLM and the Crit
 import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Any, Union, Tuple
+import os
 
 import openai
 from openai import OpenAI
@@ -65,6 +66,9 @@ from src.format.format_utils import (
     format_cells_for_evaluation,
     format_notebook_for_critique,
     markdown_to_notebook_content,
+    notebook_plan_to_markdown,
+    save_notebook_versions,
+    writer_output_to_files,
 )
 from src.searcher import (
     search_with_tavily,
@@ -942,7 +946,7 @@ class WriterAgent:
         Apply final revisions to the notebook based on critique.
 
         This method takes the complete notebook content and the final critique,
-        generates a revised version in markdown format, and then converts it
+        generates a revised version in JSON format, and then converts it
         back into the structured NotebookSectionContent format.
 
         Args:
@@ -960,7 +964,7 @@ class WriterAgent:
             notebook_plan, section_contents
         )
 
-        # Prepare the input for the Responses API
+        # Prepare the input for the OpenAI API
         user_prompt = WRITER_FINAL_REVISION_PROMPT.format(
             notebook_title=notebook_plan.title,
             notebook_description=notebook_plan.description,
@@ -971,32 +975,130 @@ class WriterAgent:
         )
 
         try:
-            logger.debug("Calling OpenAI Responses API for final notebook revision")
-
-            response = self.client.responses.create(
-                model="gpt-4o",  # Use the specified model
-                input=user_prompt,
-                temperature=0,  # Zero temperature for deterministic output
+            logger.debug(
+                "Calling OpenAI API for final notebook revision in JSON format"
             )
 
-            # Extract the revised markdown content
-            revised_markdown = response.output_text
-            if revised_markdown is None:
+            # Use standard chat completion with JSON response format
+            messages = [
+                ChatCompletionUserMessageParam(content=user_prompt, role="user"),
+            ]
+
+            # Request JSON response format
+            response = self.client.chat.completions.create(
+                model="o1-2024-12-17",
+                messages=messages,
+                temperature=0,  # Zero temperature for deterministic output
+                response_format={"type": "json_object"},
+            )
+
+            # Extract the revised JSON content
+            revised_json_str = response.choices[0].message.content
+            if revised_json_str is None or not revised_json_str.strip():
                 logger.warning(
-                    "Received None response from API, using original notebook"
+                    "Received empty response from API, using original notebook"
                 )
                 # Return the original content if we get None back
                 return section_contents
 
-            logger.info("Generated revised notebook in markdown format")
+            logger.info("Generated revised notebook in JSON format")
 
-            # Convert markdown back to NotebookSectionContent objects
-            revised_sections = markdown_to_notebook_content(revised_markdown)
-            logger.info(
-                f"Converted revised markdown to {len(revised_sections)} sections"
-            )
+            try:
+                # Parse the JSON string into Python objects
+                import json
+                from pydantic import ValidationError
 
-            return revised_sections
+                # Clean up the JSON string if necessary (remove markdown code blocks if present)
+                if "```json" in revised_json_str:
+                    revised_json_str = revised_json_str.split("```json", 1)[1]
+                if "```" in revised_json_str:
+                    revised_json_str = revised_json_str.split("```", 1)[0]
+
+                revised_json_str = revised_json_str.strip()
+
+                # Parse the JSON
+                revised_sections_data = json.loads(revised_json_str)
+
+                # Convert to NotebookSectionContent objects
+                revised_sections = []
+
+                # Check if it's a list of sections or a single notebook content
+                if isinstance(revised_sections_data, list) and all(
+                    isinstance(item, dict) for item in revised_sections_data
+                ):
+                    # If it's a list of cells, create a single section
+                    section_content = NotebookSectionContent(
+                        section_title=(
+                            section_contents[0].section_title
+                            if section_contents
+                            else "Revised Section"
+                        ),
+                        cells=[NotebookCell(**cell) for cell in revised_sections_data],
+                    )
+                    revised_sections = [section_content]
+                elif (
+                    isinstance(revised_sections_data, dict)
+                    and "sections" in revised_sections_data
+                ):
+                    # If it's a dict with sections key, process each section
+                    for section_data in revised_sections_data["sections"]:
+                        section_content = NotebookSectionContent(
+                            section_title=section_data.get(
+                                "section_title", "Untitled Section"
+                            ),
+                            cells=[
+                                NotebookCell(**cell)
+                                for cell in section_data.get("cells", [])
+                            ],
+                        )
+                        revised_sections.append(section_content)
+                else:
+                    # Fallback: try to interpret the JSON structure based on what we received
+                    logger.warning("Unexpected JSON structure, attempting to parse")
+
+                    # Iterate through section_contents to maintain original structure
+                    for i, orig_section in enumerate(section_contents):
+                        # Try to find corresponding section in revised data
+                        matching_section_data = None
+
+                        # If it's a dict with keys matching section titles
+                        if (
+                            isinstance(revised_sections_data, dict)
+                            and orig_section.section_title in revised_sections_data
+                        ):
+                            matching_section_data = revised_sections_data[
+                                orig_section.section_title
+                            ]
+
+                        if matching_section_data and isinstance(
+                            matching_section_data, list
+                        ):
+                            # Create section with cells from matching data
+                            section_content = NotebookSectionContent(
+                                section_title=orig_section.section_title,
+                                cells=[
+                                    NotebookCell(**cell)
+                                    for cell in matching_section_data
+                                ],
+                            )
+                            revised_sections.append(section_content)
+                        else:
+                            # If no matching section found, use the original
+                            logger.warning(
+                                f"No matching revision for section {i+1}, using original"
+                            )
+                            revised_sections.append(orig_section)
+
+                logger.info(
+                    f"Successfully parsed JSON to {len(revised_sections)} sections"
+                )
+                return revised_sections
+
+            except (json.JSONDecodeError, ValidationError) as e:
+                logger.error(f"Failed to parse JSON response: {e}")
+                logger.error(f"Problematic JSON: {revised_json_str[:500]}...")
+                # Return the original content if parsing fails
+                return section_contents
 
         except Exception as e:
             logger.error(f"Failed to generate final revision: {e}")
@@ -1133,6 +1235,137 @@ class WriterAgent:
         except Exception as e:
             logger.error(f"Failed to generate final critique: {e}")
             return f"Error generating final critique: {str(e)}"
+
+    def save_to_directory(
+        self,
+        notebook_plan: NotebookPlanModel,
+        section_contents: List[NotebookSectionContent],
+        output_dir: str = "/output",
+        formats: List[str] = ["ipynb", "py", "md", "json"],
+        include_critique: bool = True,
+        original_content: Optional[List[NotebookSectionContent]] = None,
+        critique: Optional[str] = None,
+    ) -> Dict[str, str]:
+        """
+        Save all important files related to the notebook under a specified directory.
+
+        Args:
+            notebook_plan (NotebookPlanModel): The notebook plan.
+            section_contents (List[NotebookSectionContent]): The generated content for all sections.
+            output_dir (str, optional): Directory to save files. Defaults to "/output".
+            formats (List[str], optional): Formats to save in. Defaults to ["ipynb", "py", "md", "json"].
+            include_critique (bool, optional): Whether to include critique if available. Defaults to True.
+            original_content (Optional[List[NotebookSectionContent]], optional): Original content before revision. Defaults to None.
+            critique (Optional[str], optional): Critique text. Defaults to None.
+
+        Returns:
+            Dict[str, str]: Dictionary mapping file types to their paths.
+        """
+        logger.info(f"Saving notebook files to directory: {output_dir}")
+
+        # Create output directory if it doesn't exist
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Dictionary to store paths to all generated files
+        saved_files = {}
+
+        # Save notebook plan as markdown and JSON
+        if notebook_plan:
+            try:
+                # Save notebook plan as markdown
+                plan_md_path = os.path.join(output_dir, "notebook_plan.md")
+                plan_markdown = notebook_plan_to_markdown(notebook_plan)
+                with open(plan_md_path, "w") as f:
+                    f.write(plan_markdown)
+                saved_files["plan_markdown"] = plan_md_path
+                logger.info(f"Saved notebook plan as markdown to {plan_md_path}")
+
+                # Save notebook plan as JSON
+                plan_json_path = os.path.join(output_dir, "notebook_plan.json")
+                with open(plan_json_path, "w") as f:
+                    f.write(notebook_plan.model_dump_json(indent=2))
+                saved_files["plan_json"] = plan_json_path
+                logger.info(f"Saved notebook plan as JSON to {plan_json_path}")
+            except Exception as e:
+                logger.error(f"Error saving notebook plan: {e}")
+
+        # If both original content and critique are provided, use save_notebook_versions
+        if include_critique and original_content is not None and critique is not None:
+            version_files = save_notebook_versions(
+                original_content=original_content,
+                revised_content=section_contents,
+                critique=critique,
+                output_dir=output_dir,
+                notebook_title=notebook_plan.title if notebook_plan else None,
+                formats=formats,
+            )
+            saved_files.update(version_files)
+            logger.info("Saved original and revised versions with critique")
+        else:
+            # Otherwise, just save the final content
+            content_files = writer_output_to_files(
+                writer_output=section_contents,
+                output_dir=output_dir,
+                notebook_title=notebook_plan.title if notebook_plan else None,
+                formats=formats,
+            )
+            saved_files.update(content_files)
+            logger.info("Saved final notebook content")
+
+            # If critique is provided but not original content, save critique separately
+            if include_critique and critique is not None:
+                critique_path = os.path.join(output_dir, "critique.md")
+                with open(critique_path, "w") as f:
+                    f.write("# Notebook Critique\n\n")
+                    f.write(critique)
+                saved_files["critique"] = critique_path
+                logger.info(f"Saved critique to {critique_path}")
+
+        # If "json" is in formats, save section contents as individual JSON files
+        if "json" in formats:
+            json_dir = os.path.join(output_dir, "sections_json")
+            os.makedirs(json_dir, exist_ok=True)
+
+            for i, section in enumerate(section_contents):
+                section_filename = (
+                    f"section_{i+1}_{section.section_title.replace(' ', '_')}.json"
+                )
+                section_path = os.path.join(json_dir, section_filename)
+                with open(section_path, "w") as f:
+                    f.write(section.model_dump_json(indent=2))
+
+            saved_files["json_sections_dir"] = json_dir
+            logger.info(f"Saved individual section JSON files to {json_dir}")
+
+        # Create a README with information about all saved files
+        readme_path = os.path.join(output_dir, "README.md")
+        try:
+            with open(readme_path, "w") as f:
+                f.write("# Generated Notebook Files\n\n")
+                f.write(
+                    f"Notebook Title: {notebook_plan.title if notebook_plan else 'Untitled'}\n\n"
+                )
+                f.write("## Files Generated\n\n")
+
+                for file_type, file_path in saved_files.items():
+                    relative_path = os.path.relpath(file_path, output_dir)
+                    f.write(f"- **{file_type}**: [{relative_path}]({relative_path})\n")
+
+                f.write("\n## Generation Information\n\n")
+                f.write(
+                    f"- Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                )
+                f.write(f"- Model used: {self.model}\n")
+                f.write(f"- Search enabled: {self.search_enabled}\n")
+                f.write(f"- Final critique enabled: {self.final_critique_enabled}\n")
+
+            saved_files["readme"] = readme_path
+            logger.info(f"Saved README file to {readme_path}")
+        except Exception as e:
+            logger.error(f"Error creating README file: {e}")
+
+        logger.info(f"Successfully saved {len(saved_files)} files to {output_dir}")
+        return saved_files
 
     def _generate_search_questions(self, section: Section) -> List[Any]:
         """

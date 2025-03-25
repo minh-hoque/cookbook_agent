@@ -159,20 +159,19 @@ print(completion.choices[0].message.content)
 
     if notebook_description:
         try:
-            from src.searcher import search_with_taviley, format_search_results
+            from src.searcher import search_with_openai, format_openai_search_results
 
             print(f"\nSearching for information about: {notebook_description}")
             logger.debug(f"Searching for topic: {notebook_description}")
-            search_results = search_with_taviley(notebook_description)
+            search_results = search_with_openai(notebook_description)
 
             if "error" in search_results:
                 logger.warning(f"Search error: {search_results['error']}")
                 print(f"Search warning: {search_results['error']}")
             else:
-                result_count = len(search_results.get("results", []))
-                formatted_search_results = format_search_results(search_results)
-                logger.info(f"Found {result_count} search results")
-                print(f"Found {result_count} search results")
+                formatted_search_results = format_openai_search_results(search_results)
+                logger.info("Search completed successfully")
+                print("Search completed successfully")
 
                 # Log a preview of the search results
                 if formatted_search_results:
