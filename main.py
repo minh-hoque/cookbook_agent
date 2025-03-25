@@ -27,6 +27,7 @@ from src.format import (
     save_plan_to_file,
     save_notebook_content,
     writer_output_to_notebook,
+    parse_markdown_to_plan,
 )
 
 # Get a logger for this module
@@ -211,15 +212,33 @@ def generate_notebook_content(
         logger.info("Generating notebook content")
 
         # Generate the content
-        original_content, final_critique, revised_content = writer.generate_content(
+        result = writer.generate_content(
             notebook_plan=notebook_plan,
             additional_requirements=additional_requirements,
         )
 
-        # Save the generated content in various formats
+        # WriterAgent.generate_content returns a tuple when final_critique_enabled=True
+        if isinstance(result, tuple) and len(result) == 3:
+            original_content, final_critique, revised_content = result
+        else:
+            # If not a tuple, it's just the content with no critique
+            revised_content = result
+            original_content = None
+            final_critique = None
 
         # 1. Save as JSON files and markdown
-        content_list = [content.model_dump() for content in revised_content]
+        content_list = []
+        if revised_content:
+            for content in revised_content:
+                if hasattr(content, "model_dump"):
+                    content_list.append(content.model_dump())
+                else:
+                    # Handle the case where content might not be a pydantic model
+                    logger.warning(
+                        "Content does not have model_dump method, using dict conversion"
+                    )
+                    content_list.append(dict(content))
+
         markdown_filepath = save_notebook_content(content_list, output_dir)
 
         # 2. Save as Jupyter notebook (.ipynb)
@@ -228,7 +247,7 @@ def generate_notebook_content(
             output_dir, f"{notebook_title.replace(' ', '_')}.ipynb"
         )
         jupyter_success = writer_output_to_notebook(
-            revised_content, notebook_filepath, notebook_title=notebook_title  # type: ignore
+            revised_content, notebook_filepath, notebook_title=notebook_title
         )
 
         if markdown_filepath:
@@ -304,13 +323,33 @@ def main():
 
     # Save the plan to a file
     notebook_title = notebook_plan.title
-    output_file = os.path.join(output_dir, f"{notebook_title}.md")
+    plan_file = os.path.join(output_dir, f"{notebook_title.replace(' ', '_')}.md")
     try:
-        save_plan_to_file(notebook_plan, output_file)
-        print(f"\nNotebook plan saved to {output_file}")
+        save_plan_to_file(notebook_plan, plan_file)
+        print(f"\nNotebook plan saved to {plan_file}")
     except Exception as e:
         logger.error(f"Error saving notebook plan: {str(e)}")
         print(f"Warning: Could not save notebook plan to file: {str(e)}")
+        sys.exit(1)
+
+    # Ask user if they want to edit the plan
+    print("\nIf you want to edit the notebook plan before proceeding:")
+    print(f"1. Open the file: {plan_file}")
+    print("2. Make your changes and save the file")
+    user_input = input(
+        "Type 'y' when you're done editing (or 'n' to continue without editing): "
+    )
+
+    if user_input.lower() == "y":
+        # Read the edited plan back
+        try:
+            edited_plan = parse_markdown_to_plan(plan_file)
+            notebook_plan = edited_plan
+            print("\nEdited plan loaded successfully.")
+        except Exception as e:
+            logger.error(f"Error loading edited plan: {str(e)}")
+            print(f"Error loading the edited plan: {str(e)}")
+            print("Continuing with the original plan.")
 
     # Ask user if they want to proceed with generating the notebook
     user_input = input("\nDo you want to generate the notebook content now? (y/n): ")

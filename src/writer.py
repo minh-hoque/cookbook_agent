@@ -988,7 +988,6 @@ class WriterAgent:
             response = self.client.chat.completions.create(
                 model="o1-2024-12-17",
                 messages=messages,
-                temperature=0,  # Zero temperature for deterministic output
                 response_format={"type": "json_object"},
             )
 

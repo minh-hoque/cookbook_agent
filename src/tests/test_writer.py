@@ -392,6 +392,7 @@ def main():
     Main function for running the WriterAgent test from the command line.
 
     example:
+    python -m src.tests.test_writer --model gpt-4o --plan /Users/minhajul/personal/github/cookbook_agent/data/test_writer_notebook_plan.md
     python -m src.tests.test_writer --model gpt-4o --plan /Users/minhajul/personal/github/cookbook_agent/data/agents_sdk_synthetic_transcripts.md
     """
     parser = argparse.ArgumentParser(description="Test the WriterAgent")

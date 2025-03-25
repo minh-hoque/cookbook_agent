@@ -27,6 +27,7 @@ from src.format.format_utils import (
 from src.format.plan_format import (
     format_notebook_plan,
     save_plan_to_file,
+    parse_markdown_to_plan,
 )
 
 __all__ = [
@@ -42,6 +43,7 @@ __all__ = [
     "save_notebook_content",
     "format_notebook_plan",
     "save_plan_to_file",
+    "parse_markdown_to_plan",
     "writer_output_to_notebook",
     "writer_output_to_python_script",
     "writer_output_to_files",
