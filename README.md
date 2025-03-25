@@ -1,47 +1,122 @@
 # Cookbook Agent
 
-AI Agent for generating educational Jupyter notebooks about OpenAI APIs.
+![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
 
-## Features
+An AI-powered agent system for generating high-quality educational Jupyter notebooks about OpenAI APIs and AI development concepts.
+
+## 📖 Overview
+
+Cookbook Agent streamlines the creation of educational content through an AI-driven workflow:
+
+1. **Planning**: Generates structured notebook outlines based on user requirements
+2. **Writing**: Creates comprehensive content with code examples for each section
+3. **Review & Revision**: Automatically reviews and improves content quality
+
+Perfect for technical educators, API documentation teams, and developers learning to integrate AI capabilities into applications.
+
+## ✨ Features
 
 - **Interactive Clarification**: Uses tools to ask clarification questions when information is ambiguous or missing
 - **Structured Outputs**: Utilizes OpenAI's beta.chat.completions.parse for type-safe structured outputs
 - **Robust Error Handling**: Provides fallbacks and graceful error reporting
 - **Modular Tools**: Organized reusable tools in a dedicated `tools/` package
+- **Multi-format Export**: Generates content in Markdown, Jupyter Notebook, and JSON formats
+- **Auto-critique & Revision**: Self-reviews generated content for accuracy and completeness
 
-## Installation
+## 🔧 Prerequisites
 
-You can install the package in development mode:
+- Python 3.9+
+- OpenAI API key
+- Git (for cloning the repository)
+- Virtual environment tool (venv, conda, etc.)
+
+## 🚀 Installation
+
+### 1. Clone the repository
 
 ```bash
-# Clone the repository
 git clone https://github.com/yourusername/cookbook_agent.git
 cd cookbook_agent
+```
 
-# Create a virtual environment (optional but recommended)
+### 2. Set up a virtual environment
+
+```bash
+# Using venv (recommended)
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Install the package in development mode
-./install.sh
-# Or manually: pip install -e .
+# OR using conda
+conda create -n cookbook_agent python=3.9
+conda activate cookbook_agent
 ```
 
-## Usage
+### 3. Install the package
 
-You can run the main application from the command line:
+```bash
+# Using the installation script
+./install.sh
+
+# OR manually
+pip install -e .
+```
+
+### 4. Set up environment variables
+
+Create a `.env` file in the project root with your API keys:
+
+```
+OPENAI_API_KEY=your_openai_api_key
+
+# Optional: For LangSmith tracing
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=your_langsmith_api_key
+LANGSMITH_PROJECT=cookbook_agent
+```
+
+## 🖥️ Usage
+
+### Basic Usage
+
+Run the main application to generate a notebook plan:
 
 ```bash
 python main.py
 ```
 
-The application will:
+This will:
 1. Prompt you for notebook requirements
 2. Ask clarification questions if needed
 3. Generate a structured notebook plan
-4. Save the plan to notebook_plan.md
+4. Save the plan to `notebook_plan.md`
 
-## LangSmith Tracing
+### Generate Notebook Content from Plan
+
+Once you have a plan, use the writer module to generate content:
+
+```bash
+python -m src.tests.test_writer --plan notebook_plan.md --output ./output
+```
+
+Options:
+- `--model <model_name>`: Specify the OpenAI model to use (default: gpt-4o)
+- `--section <index>`: Generate content for a specific section only (0-based index)
+- `--parse-only`: Only parse the plan without generating content
+
+Example:
+```bash
+python -m src.tests.test_writer --model gpt-4o --plan ./data/agents_sdk_plan.md
+```
+
+### Output Files
+
+Generated content is saved to the specified output directory (default: `./output`):
+- `notebook_plan.json`: JSON representation of the parsed plan
+- `notebook_<title>.md`: Markdown version of the complete notebook
+- `notebook_<title>.ipynb`: Jupyter Notebook version
+- `section_<n>_<title>.json`: Individual section content
+
+## 📊 LangSmith Tracing
 
 This project uses LangSmith for tracing and monitoring. To enable tracing:
 
@@ -53,7 +128,7 @@ This project uses LangSmith for tracing and monitoring. To enable tracing:
    export LANGSMITH_API_KEY=your_langsmith_api_key_here
    export LANGSMITH_PROJECT=your_langsmith_project_name_here
    ```
-   Or add them to your `.env` file (see `.env.example`)
+   Or add them to your `.env` file
 
 ### With LangChain Components
 
@@ -82,8 +157,7 @@ final_state = app.invoke(
 )
 ```
 
-
-## Project Structure
+## 📁 Project Structure
 
 ```
 cookbook_agent/
@@ -128,14 +202,36 @@ cookbook_agent/
         └── test_writer.py
 ```
 
-## Development
+## 🧪 Development
 
-Run the test script to verify functionality:
+### Running Tests
+
+Verify functionality with the test scripts:
 
 ```bash
-python src/test_planner.py
+# Test the planner module
+python -m src.tests.test_planner
+
+# Test the writer module
+python -m src.tests.test_writer --parse-only
 ```
 
-## License
+### Common Issues
+
+- **"OpenAI API key not found"**: Set your API key in the `.env` file or as an environment variable
+- **Import errors**: Make sure you've activated your virtual environment and installed with `pip install -e .`
+- **Library not found errors**: Check that all dependencies were installed with `pip install -r requirements.txt`
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## 📄 License
 
 This project is licensed under the MIT License - see the LICENSE file for details. 
