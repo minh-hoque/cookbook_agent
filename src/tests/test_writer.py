@@ -41,10 +41,12 @@ for logger_name in logging.root.manager.loggerDict:
         logging.getLogger(logger_name).setLevel(logging.WARNING)
 # ---------------------------------------------------------------------
 
-# Import format_utils functions at the top level
-from src.format.format_utils import (
+# Import formatting functions from specialized modules
+from src.format.markdown_utils import (
     notebook_content_to_markdown,
     save_markdown_to_file,
+)
+from src.format.notebook_utils import (
     writer_output_to_notebook,
     save_notebook_versions,
 )

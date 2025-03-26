@@ -20,10 +20,6 @@ A brief introduction to OpenAI's APIs, focusing on their capabilities and how th
 
 Explanation of predicted outputs, their advantages, such as time saving and increased efficiency, and the scenarios in which they are particularly useful. This sets the groundwork for the rest of the tutorial.
 
-### Using Predicted Outputs: Step-by-Step Guide
+#### Using Predicted Outputs: Step-by-Step Guide
 
 A detailed walkthrough of how to implement predicted outputs in OpenAI APIs, using a logical step-by-step approach that builds on previous understanding.
-
-#### Creating and Configuring Requests
-
-Demonstrates how to structure API requests to utilize predicted outputs effectively, including key parameters and configurations.

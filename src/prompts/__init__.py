@@ -6,7 +6,7 @@ from src.prompts.planner_prompts import *
 from src.prompts.writer_prompts import *
 from src.prompts.critic_prompts import *
 from src.prompts.search_prompts import *
-from src.format.format_utils import (
+from src.format.prompt_utils import (
     format_subsections_details,
     format_additional_requirements,
     format_previous_content,

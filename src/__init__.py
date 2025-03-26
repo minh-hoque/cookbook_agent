@@ -6,8 +6,8 @@ __version__ = "0.1.0"
 
 from src.planner import PlannerLLM
 from src.writer import WriterAgent
-from src.format import (
-    format_json,
+from src.format.core_utils import format_json
+from src.format.markdown_utils import (
     notebook_cell_to_markdown,
     notebook_section_to_markdown,
     notebook_content_to_markdown,

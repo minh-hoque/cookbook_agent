@@ -14,7 +14,7 @@ import argparse
 # Add the parent directory to the path so we can import the src package
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
-from src.format import json_file_to_markdown, notebook_plan_to_markdown
+from src.format.markdown_utils import json_file_to_markdown, notebook_plan_to_markdown
 from src.models import NotebookPlanModel
 
 

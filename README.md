@@ -182,7 +182,12 @@ cookbook_agent/
     ├── user_input.py       # User input handling
     ├── format/             # Formatting utilities
     │   ├── __init__.py
-    │   ├── format_utils.py
+    │   ├── core_utils.py   # Basic utility functions
+    │   ├── markdown_utils.py  # Markdown formatting utilities
+    │   ├── notebook_utils.py  # Notebook conversion utilities
+    │   ├── prompt_utils.py    # Prompt formatting utilities
+    │   ├── plan_format.py     # Notebook plan formatting utilities
+    │   ├── format_utils.py    # (Deprecated) Re-exports for backward compatibility
     │   ├── examples.py
     │   ├── convert_multiple_files.py
     │   └── json_to_md_example.py

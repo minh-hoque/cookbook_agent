@@ -17,53 +17,10 @@
           "title": "Understanding Predicted Outputs",
           "description": "Explanation of predicted outputs, their advantages, such as time saving and increased efficiency, and the scenarios in which they are particularly useful. This sets the groundwork for the rest of the tutorial.\n",
           "subsections": []
-        }
-      ]
-    },
-    {
-      "title": "Setup and Prerequisites",
-      "description": "This section outlines the environment setup required to work with OpenAI APIs, and covers any preliminary knowledge the learner should be equipped with.\n",
-      "subsections": [
-        {
-          "title": "Installing OpenAI Python Package",
-          "description": "Guidance on how to install the OpenAI Python package necessary for accessing the API in a Jupyter notebook environment.\n",
-          "subsections": []
         },
         {
-          "title": "API Authentication and Setup",
-          "description": "Instructions for authenticating and setting up access to OpenAI's APIs, including API keys and permissions.\n",
-          "subsections": []
-        },
-        {
-          "title": "Key Concepts and Terminology",
-          "description": "Clarifies important terms and concepts related to OpenAI APIs and machine learning essential for the tutorial, ensuring all learners start with a common understanding.\n",
-          "subsections": []
-        }
-      ]
-    },
-    {
-      "title": "Using Predicted Outputs: Step-by-Step Guide",
-      "description": "A detailed walkthrough of how to implement predicted outputs in OpenAI APIs, using a logical step-by-step approach that builds on previous understanding.\n",
-      "subsections": [
-        {
-          "title": "Creating and Configuring Requests",
-          "description": "Demonstrates how to structure API requests to utilize predicted outputs effectively, including key parameters and configurations.\n",
-          "subsections": []
-        },
-        {
-          "title": "Understanding Code Snippet Example",
-          "description": "An in-depth look at the provided code snippet, explaining each component and its role in achieving predicted outputs.\n",
-          "subsections": []
-        }
-      ]
-    },
-    {
-      "title": "Summary and Next Steps",
-      "description": "This final section offers a review of key points covered and suggests additional resources and next steps for continued learning and implementation.\n",
-      "subsections": [
-        {
-          "title": "Review of Key Concepts",
-          "description": "Summation of the main ideas and processes covered in the tutorial to reinforce learning outcomes.\n",
+          "title": "Using Predicted Outputs: Step-by-Step Guide",
+          "description": "A detailed walkthrough of how to implement predicted outputs in OpenAI APIs, using a logical step-by-step approach that builds on previous understanding.\n",
           "subsections": []
         }
       ]

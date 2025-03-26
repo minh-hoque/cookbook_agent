@@ -22,12 +22,14 @@ from src.tools.debug import DebugLevel
 
 # Import utilities
 from src.utils import configure_logging, test_logging
-from src.format import (
+from src.format.plan_format import (
     format_notebook_plan,
     save_plan_to_file,
+    parse_markdown_to_plan,
+)
+from src.format.notebook_utils import (
     save_notebook_content,
     writer_output_to_notebook,
-    parse_markdown_to_plan,
 )
 
 # Get a logger for this module
@@ -64,6 +66,11 @@ def parse_arguments():
         "--model",
         help="OpenAI model to use for content generation",
         default="gpt-4o",
+    )
+    parser.add_argument(
+        "--output-dir",
+        help="Directory to save generated content. Will be created if it doesn't exist.",
+        default="output",
     )
     return parser.parse_args()
 
@@ -313,7 +320,7 @@ def main():
         sys.exit(1)
 
     # Create output directory
-    output_dir = "output"
+    output_dir = args.output_dir
     os.makedirs(output_dir, exist_ok=True)
     logger.debug(f"Created output directory: {output_dir}")
 
