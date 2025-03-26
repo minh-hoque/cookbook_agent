@@ -1,112 +1,159 @@
-# Cookbook Agent - PlannerLLM
+# Cookbook Agent - Core Modules
 
-This implementation provides a PlannerLLM class for generating structured educational notebook plans about OpenAI APIs. The PlannerLLM uses a tool-based approach to dynamically ask for clarifications from users when needed, and leverages OpenAI's structured outputs feature for type-safe return values.
+This directory contains the core implementation modules for the Cookbook Agent project, which generates high-quality educational notebook content about OpenAI APIs and AI development concepts.
 
-## Features
+## Main Components
 
-- **Requirements Analysis**: Analyzes user requirements to generate a notebook plan
-- **Interactive Clarification**: Uses tools to ask clarification questions when information is ambiguous or missing
-- **Structured Outputs**: Utilizes OpenAI's beta.chat.completions.parse for type-safe structured outputs
-- **Robust Error Handling**: Provides fallbacks and graceful error reporting
-- **Modular Tools**: Organized reusable tools in a dedicated `tools/` package
+- **PlannerLLM**: Analyzes user requirements and generates structured notebook outlines
+- **WriterAgent**: Generates comprehensive notebook content using a LangGraph workflow
+- **Searcher**: Integrates web search capabilities to enhance content with up-to-date information
+- **Format Utilities**: Exports content in multiple formats (Markdown, Jupyter, Python scripts)
 
-## Project Structure
+## Architecture Overview
+
+The system follows a three-stage pipeline:
+
+1. **Planning Stage**: The `PlannerLLM` analyzes requirements and generates a detailed outline
+2. **Writing Stage**: The `WriterAgent` generates content following a critiquing and revision workflow
+3. **Export Stage**: The format utilities convert the content to various output formats
+
+## Key Features
+
+- **Interactive Clarification**: Tools to ask clarification questions when requirements are ambiguous
+- **Structured Outputs**: Type-safe models using Pydantic
+- **Search Integration**: Tavily and OpenAI search capabilities for up-to-date information
+- **Graph-based Workflow**: LangGraph for orchestrating agent interactions with state management
+- **Auto-critique**: Content quality evaluation and revision loop
+
+## Module Structure
 
 ```
 src/
 ├── models.py               # Pydantic models for structured output
-├── planner.py              # Main PlannerLLM implementation
+├── planner.py              # PlannerLLM implementation
+├── writer.py               # WriterAgent implementation
+├── searcher.py             # Search functionality
+├── user_input.py           # User input utilities
+├── format/                 # Formatting utilities
+│   ├── core_utils.py       # Basic utility functions
+│   ├── markdown_utils.py   # Markdown formatting
+│   ├── notebook_utils.py   # Notebook conversion
+│   ├── prompt_utils.py     # Prompt formatting utilities
+│   └── plan_format.py      # Plan formatting utilities
 ├── prompts/                # Prompt templates
-│   └── planner_prompts.py  # Templates for planning and clarification
+│   ├── planner_prompts.py  # Templates for planning
+│   ├── writer_prompts.py   # Templates for content writing
+│   ├── critic_prompts.py   # Templates for content evaluation
+│   └── search_prompts.py   # Templates for search operations
 ├── tools/                  # LLM tools
-│   ├── __init__.py         # Tool exports
-│   ├── clarification_tools.py  # Tools for getting clarifications
+│   ├── clarification_tools.py # Tools for getting clarifications
+│   ├── debug.py            # Debug utilities for tools
 │   └── utils.py            # Tool utility functions
-├── setup_tools.py          # Script to set up tools in Python path
-└── test_planner.py         # Test script
+├── utils/                  # General utilities
+└── tests/                  # Test modules
 ```
 
-## Implementation Details
+## Using PlannerLLM
 
-The core implementation consists of:
-
-1. **Pydantic Models**: Strong type definitions for both clarification questions and notebook plans
-2. **Prompt Templates**: Templates for generating the initial plan and plans with clarifications
-3. **Tool-based Interaction**: Uses OpenAI function calling to request clarifications from users
-4. **Structured Outputs**: Utilizes OpenAI's structured outputs to ensure type-safe responses
-5. **Tools Package**: Reusable tool definitions with utility functions for working with LLM tools
-
-## Using the Tools Package
-
-The tools package can be imported in two ways:
-
-### Method 1: Add to Python Path (Recommended)
-
-Run the `setup_tools.py` script to add the tools package to your Python path:
-
-```bash
-# From the project root
-python src/setup_tools.py
-```
-
-After running the setup script, you can import tools directly:
+The `PlannerLLM` class analyzes user requirements, asks for clarifications when needed, and generates a structured notebook plan:
 
 ```python
-from tools import get_clarifications_tool, extract_tool_arguments, has_tool_call
-```
-
-### Method 2: Relative Imports
-
-```python
-import sys
-import os
-
-# Add the src directory to the path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-# Now you can import from tools
-from tools import get_clarifications_tool
-```
-
-## Usage Example
-
-```python
-from planner import PlannerLLM
+from src.planner import PlannerLLM
+from src.models import NotebookPlanModel
 
 # Create a callback to handle clarification questions
-def callback(questions):
-    # In a real application, this would prompt the user and collect answers
+def get_clarifications(questions):
     answers = {}
     for question in questions:
-        answer = input(f"Question: {question}\nAnswer: ")
+        print(f"Question: {question}")
+        answer = input("Answer: ")
         answers[question] = answer
     return answers
 
 # Initialize the planner
-planner = PlannerLLM()
+planner = PlannerLLM(model="gpt-4o")
 
 # Generate a notebook plan
 notebook_plan = planner.plan_notebook(
     {
-        "notebook_description": "Guide to OpenAI APIs",
+        "notebook_description": "Guide to using OpenAI Assistant API",
         "notebook_purpose": "Educational tutorial",
-        "target_audience": "Beginners",
-        "additional_requirements": ["Include code examples", "Cover authentication"],
-        "code_snippets": ["import openai\nclient = OpenAI()\n..."]
+        "target_audience": "AI developers",
+        "additional_requirements": ["Include real-world examples", "Cover error handling"],
     },
-    callback
+    clarification_callback=get_clarifications
 )
-
-# Access the structured plan
-print(f"Notebook Title: {notebook_plan.title}")
-print(f"Sections: {len(notebook_plan.sections)}")
 ```
 
-## Testing
+## Using WriterAgent
 
-You can run the test script to see the PlannerLLM in action:
+The `WriterAgent` uses a LangGraph workflow to generate high-quality content based on the notebook plan:
+
+```python
+from src.writer import WriterAgent
+
+# Initialize the writer agent
+writer = WriterAgent(model="gpt-4o", search_enabled=True)
+
+# Generate content for the entire notebook
+notebook_content = writer.generate_content(notebook_plan)
+
+# Save the generated content
+writer.save_to_directory(
+    notebook_plan=notebook_plan,
+    section_contents=notebook_content,
+    output_dir="./output",
+    formats=["ipynb", "md", "py", "json"]
+)
+```
+
+## Using Searcher
+
+The `searcher` module provides tools to search for information about notebook topics:
+
+```python
+from src.searcher import search_with_tavily, search_with_openai, format_tavily_search_results
+
+# Search with Tavily
+search_results = search_with_tavily("OpenAI Assistant API capabilities", max_results=5)
+formatted_results = format_tavily_search_results(search_results)
+
+# Search with OpenAI
+openai_results = search_with_openai("OpenAI Assistant API capabilities", model="gpt-4o")
+```
+
+## Format Utilities
+
+The `format` package provides utilities for converting notebook content to different formats:
+
+```python
+from src.format.markdown_utils import writer_output_to_markdown
+from src.format.notebook_utils import writer_output_to_notebook
+
+# Convert to Markdown
+markdown = writer_output_to_markdown(notebook_content, output_file="notebook.md")
+
+# Convert to Jupyter Notebook
+writer_output_to_notebook(notebook_content, output_file="notebook.ipynb")
+```
+
+## Installation
+
+This package is designed to be installed via:
 
 ```bash
-cd src
-python test_planner.py
-``` 
+# From project root
+pip install -e .
+```
+
+## Requirements
+
+The core requirements include:
+- Python 3.9+
+- OpenAI Python SDK
+- LangChain and LangGraph
+- Pydantic
+- Tavily Python SDK (optional, for search functionality)
+- Jupyter (for notebook handling)
+
+See the project's `requirements.txt` for full dependencies. 

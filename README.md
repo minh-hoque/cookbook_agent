@@ -10,17 +10,19 @@ Cookbook Agent streamlines the creation of educational content through an AI-dri
 
 1. **Planning**: Generates structured notebook outlines based on user requirements
 2. **Writing**: Creates comprehensive content with code examples for each section
-3. **Review & Revision**: Automatically reviews and improves content quality
+3. **Search Integration**: Leverages internet search to enrich content with up-to-date information
+4. **Critique & Revision**: Automatically reviews and improves content quality through a feedback loop
 
 Perfect for technical educators, API documentation teams, and developers learning to integrate AI capabilities into applications.
 
 ## ✨ Features
 
 - **Interactive Clarification**: Uses tools to ask clarification questions when information is ambiguous or missing
-- **Structured Outputs**: Utilizes OpenAI's beta.chat.completions.parse for type-safe structured outputs
+- **Structured Outputs**: Utilizes OpenAI's structured outputs for type-safe content generation
 - **Robust Error Handling**: Provides fallbacks and graceful error reporting
-- **Modular Tools**: Organized reusable tools in a dedicated `tools/` package
-- **Multi-format Export**: Generates content in Markdown, Jupyter Notebook, and JSON formats
+- **LangGraph Workflows**: Orchestrates complex agent interactions with state management
+- **Search Integration**: Incorporates Tavily and OpenAI web search for up-to-date information
+- **Multi-format Export**: Generates content in Markdown, Jupyter Notebook, Python script, and JSON formats
 - **Auto-critique & Revision**: Self-reviews generated content for accuracy and completeness
 
 ## 🔧 Prerequisites
@@ -29,6 +31,7 @@ Perfect for technical educators, API documentation teams, and developers learnin
 - OpenAI API key
 - Git (for cloning the repository)
 - Virtual environment tool (venv, conda, etc.)
+- Optional: Tavily API key (for enhanced search functionality)
 
 ## 🚀 Installation
 
@@ -59,6 +62,7 @@ conda activate cookbook_agent
 
 # OR manually
 pip install -e .
+pip install -r requirements.txt
 ```
 
 ### 4. Set up environment variables
@@ -67,6 +71,9 @@ Create a `.env` file in the project root with your API keys:
 
 ```
 OPENAI_API_KEY=your_openai_api_key
+
+# Optional: For Tavily search
+TAVILY_API_KEY=your_tavily_api_key
 
 # Optional: For LangSmith tracing
 LANGSMITH_TRACING=true
@@ -92,7 +99,7 @@ This will:
 
 ### Generate Notebook Content from Plan
 
-Once you have a plan, use the writer module to generate content:
+Once you have a plan, use the WriterAgent to generate content:
 
 ```bash
 python -m src.tests.test_writer --plan notebook_plan.md --output ./output
@@ -102,6 +109,7 @@ Options:
 - `--model <model_name>`: Specify the OpenAI model to use (default: gpt-4o)
 - `--section <index>`: Generate content for a specific section only (0-based index)
 - `--parse-only`: Only parse the plan without generating content
+- `--max-retries <value>`: Maximum number of retries for content generation (default: 3)
 
 Example:
 ```bash
@@ -114,6 +122,7 @@ Generated content is saved to the specified output directory (default: `./output
 - `notebook_plan.json`: JSON representation of the parsed plan
 - `notebook_<title>.md`: Markdown version of the complete notebook
 - `notebook_<title>.ipynb`: Jupyter Notebook version
+- `notebook_<title>.py`: Python script version
 - `section_<n>_<title>.json`: Individual section content
 
 ## 📊 LangSmith Tracing
@@ -122,40 +131,18 @@ This project uses LangSmith for tracing and monitoring. To enable tracing:
 
 1. Create a LangSmith account at https://smith.langchain.com/
 2. Copy your API key from the LangSmith dashboard
-3. Set up environment variables:
-   ```bash
-   export LANGSMITH_TRACING=true
-   export LANGSMITH_API_KEY=your_langsmith_api_key_here
-   export LANGSMITH_PROJECT=your_langsmith_project_name_here
+3. Set up environment variables in your `.env` file:
    ```
-   Or add them to your `.env` file
+   LANGSMITH_TRACING=true
+   LANGSMITH_API_KEY=your_langsmith_api_key_here
+   LANGSMITH_PROJECT=your_langsmith_project_name_here
+   ```
 
-### With LangChain Components
-
-If you're using LangChain components, tracing is automatically enabled when the environment variables are set.
-
-### With LangGraph
-
-For LangGraph workflows:
-
-```python
-from langgraph.graph import StateGraph
-from langchain_openai import ChatOpenAI
-
-# LangSmith will automatically trace LangChain components
-model = ChatOpenAI()
-
-# Create your graph
-workflow = StateGraph(MessagesState)
-# Add nodes and edges...
-app = workflow.compile()
-
-# Invoke with optional thread_id for grouping related traces
-final_state = app.invoke(
-    {"messages": [HumanMessage(content="your query")]},
-    config={"configurable": {"thread_id": "unique_id"}}
-)
-```
+LangSmith integration enables visualization of the entire generation workflow, including:
+- Agent decision-making processes
+- Content generation steps
+- Critique and revision cycles
+- Search operations and their results
 
 ## 📁 Project Structure
 
@@ -167,44 +154,41 @@ cookbook_agent/
 ├── install.sh              # Installation script
 ├── requirements.txt        # Project dependencies
 ├── .env.example            # Example environment variables
-├── notebook_plan.md        # Generated notebook plan
-├── test_notebook_plan.md   # Test notebook plan
-├── notebook_generator_flow.md # Flow documentation
-├── data/                   # Data directory
+├── data/                   # Test data and examples
 ├── output/                 # Output directory
-├── logs/                   # Log files
+├── notebooks/              # Sample notebooks
 └── src/                    # Source code
     ├── __init__.py         # Package initialization
     ├── models.py           # Pydantic models
     ├── planner.py          # PlannerLLM implementation
     ├── searcher.py         # Search functionality
-    ├── writer.py           # Notebook writer
+    ├── writer.py           # WriterAgent implementation
     ├── user_input.py       # User input handling
     ├── format/             # Formatting utilities
     │   ├── __init__.py
     │   ├── core_utils.py   # Basic utility functions
-    │   ├── markdown_utils.py  # Markdown formatting utilities
-    │   ├── notebook_utils.py  # Notebook conversion utilities
-    │   ├── prompt_utils.py    # Prompt formatting utilities
-    │   ├── plan_format.py     # Notebook plan formatting utilities
-    │   ├── format_utils.py    # (Deprecated) Re-exports for backward compatibility
-    │   ├── examples.py
-    │   ├── convert_multiple_files.py
-    │   └── json_to_md_example.py
+    │   ├── markdown_utils.py  # Markdown formatting
+    │   ├── notebook_utils.py  # Notebook conversion
+    │   ├── prompt_utils.py    # Prompt formatting
+    │   ├── plan_format.py     # Plan formatting
+    │   └── format_utils.py    # Compatibility re-exports
     ├── prompts/            # Prompt templates
     │   ├── __init__.py
     │   ├── planner_prompts.py
     │   ├── writer_prompts.py
-    │   └── critic_prompts.py
+    │   ├── critic_prompts.py
+    │   └── search_prompts.py
     ├── tools/              # LLM tools
     │   ├── clarification_tools.py
     │   ├── debug.py
     │   └── utils.py
+    ├── utils/              # Utility functions
     └── tests/              # Test modules
         ├── __init__.py
         ├── test_planner.py
+        ├── test_writer.py
         ├── test_searcher.py
-        └── test_writer.py
+        └── test_format.py
 ```
 
 ## 🧪 Development
@@ -219,13 +203,20 @@ python -m src.tests.test_planner
 
 # Test the writer module
 python -m src.tests.test_writer --parse-only
+
+# Test the searcher module
+python -m src.tests.test_searcher
+
+# Test the format utilities
+python -m src.tests.test_format
 ```
 
 ### Common Issues
 
 - **"OpenAI API key not found"**: Set your API key in the `.env` file or as an environment variable
 - **Import errors**: Make sure you've activated your virtual environment and installed with `pip install -e .`
-- **Library not found errors**: Check that all dependencies were installed with `pip install -r requirements.txt`
+- **Module not found errors**: Check that all dependencies were installed with `pip install -r requirements.txt`
+- **"tavily-python not installed"**: Install it with `pip install tavily-python` for search functionality
 
 ## 🤝 Contributing
 

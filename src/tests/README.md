@@ -1,74 +1,104 @@
-# WriterAgent Test
+# Cookbook Agent Test Modules
 
-This directory contains tests for the WriterAgent, which is responsible for generating notebook content based on a plan.
+This directory contains test modules for the different components of the Cookbook Agent project.
+
+## Available Tests
+
+- `test_planner.py`: Tests the PlannerLLM implementation
+- `test_writer.py`: Tests the WriterAgent implementation
+- `test_searcher.py`: Tests the search functionality
+- `test_format.py`: Tests the format utilities
 
 ## Running the Tests
 
-### Command Line Interface
+### Testing the Writer Agent
 
-You can run the WriterAgent test from the command line using the `run_writer_test.py` script:
+The WriterAgent test is the most comprehensive and can be run from the command line:
 
 ```bash
 # Run from the project root directory
-python src/tests/run_writer_test.py --plan ./data/test_notebook_plan.md --output ./output
+python -m src.tests.test_writer --plan ./data/test_notebook_plan.md --output ./output
 ```
 
 ### Command Line Options
 
-The script accepts the following command line options:
+The WriterAgent test script accepts the following command line options:
 
 - `--plan`: Path to the markdown plan file (default: `./data/test_notebook_plan.md`)
 - `--output`: Directory to save the output to (default: `./output`)
 - `--section`: Index of the section to generate content for (0-based, default: None, which means generate all sections)
 - `--model`: The model to use for generation (default: `gpt-4o`)
 - `--max-retries`: Maximum number of retries for content generation (default: 3)
-- `--parse-only`: Only parse the plan and save it as JSON, don't generate content
+- `--parse-only`: Only parse the plan and save it as JSON, without generating content
+- `--no-search`: Disable search functionality for content generation
 
 ### Examples
 
 Generate content for all sections using the default plan file:
 
 ```bash
-python src/tests/run_writer_test.py
+python -m src.tests.test_writer
 ```
 
 Generate content for a specific section (e.g., the first section):
 
 ```bash
-python src/tests/run_writer_test.py --section 0
+python -m src.tests.test_writer --section 0
 ```
 
 Use a different model:
 
 ```bash
-python src/tests/run_writer_test.py --model gpt-3.5-turbo
+python -m src.tests.test_writer --model gpt-3.5-turbo
 ```
 
 Use a custom plan file:
 
 ```bash
-python src/tests/run_writer_test.py --plan ./path/to/your/plan.md
+python -m src.tests.test_writer --plan ./path/to/your/plan.md
 ```
 
-Only parse the plan and save it as JSON (useful for debugging):
+Only parse the plan and save it as JSON:
 
 ```bash
-python src/tests/run_writer_test.py --parse-only
+python -m src.tests.test_writer --parse-only
+```
+
+### Testing the Planner
+
+The PlannerLLM test demonstrates the planning functionality:
+
+```bash
+python -m src.tests.test_planner
+```
+
+### Testing the Searcher
+
+The searcher test demonstrates the search functionality:
+
+```bash
+python -m src.tests.test_searcher
+```
+
+### Testing the Format Utilities
+
+The format utilities test demonstrates the conversion between different formats:
+
+```bash
+python -m src.tests.test_format
 ```
 
 ## Dependencies
 
-To run the full test with content generation, you need to have the following dependencies installed:
+To run the tests, you need to have the following dependencies installed:
 
 ```bash
-pip install openai langchain-openai langgraph
+pip install openai langchain-openai langgraph tavily-python
 ```
-
-If you don't have these dependencies installed, the test will still parse the plan and save it as JSON, but it won't generate content.
 
 ## Markdown Plan Format
 
-The test expects a markdown file with the following format:
+The writer test expects a markdown file with the following format:
 
 ```markdown
 # Title of the Notebook
@@ -98,13 +128,11 @@ Sub-subsection 1.1.1 description.
 Section 2 description.
 ```
 
-The `parse_markdown_to_plan` function in `run_writer_test.py` parses this format into a dictionary that can be used to create a `NotebookPlanModel` object for the WriterAgent.
+## Output Formats
 
-## Output Format
+The WriterAgent test saves the generated content in multiple formats:
 
-The test saves the generated content in multiple formats in the specified output directory:
-
-1. **JSON Files**: Each section is saved as a separate JSON file with the following structure:
+1. **JSON Files**: Each section is saved as a separate JSON file:
 
 ```json
 {
@@ -124,26 +152,32 @@ The test saves the generated content in multiple formats in the specified output
 
 2. **Markdown File**: A complete markdown version of the notebook is saved as a single file.
 
-3. **Jupyter Notebook (.ipynb)**: The content is saved as a ready-to-use Jupyter notebook file. This notebook can be opened directly in Jupyter Lab, Jupyter Notebook, VS Code, or any other compatible environment.
+3. **Jupyter Notebook (.ipynb)**: The content is saved as a ready-to-use Jupyter notebook file.
 
-The output behavior differs slightly depending on whether you're generating a single section or all sections:
+4. **Python Script (.py)**: The content is saved as a Python script with code cells and comments.
 
-### When generating content for a single section
+### Output Files When Generating a Single Section
 
-The following files are created:
 - A JSON file with the section content (`section_N_SectionTitle.json`)
 - A markdown file containing just that section (`notebook_SectionTitle.md`)
 - A Jupyter notebook for just that section (`notebook_SectionTitle.ipynb`)
+- A Python script for just that section (`notebook_SectionTitle.py`)
 
-### When generating content for all sections
+### Output Files When Generating All Sections
 
-The following files are created:
 - Individual JSON files for each section (`section_1_SectionTitle.json`, `section_2_SectionTitle.json`, etc.)
-- A markdown file containing all sections (`notebook_FirstSectionTitle.md` or `full_notebook.md`)
-- A complete Jupyter notebook with all sections as a single file (`NotebookTitle.ipynb`)
-
-These files provide flexibility for different use cases and validation methods.
+- A markdown file containing all sections (`notebook_NotebookTitle.md`)
+- A complete Jupyter notebook with all sections (`notebook_NotebookTitle.ipynb`)
+- A Python script with all sections (`notebook_NotebookTitle.py`)
 
 ## Error Handling
 
-The test is designed to be robust against import errors and other issues. If there are problems importing the required modules or generating content, the test will still parse the plan and save it as JSON, making it useful for debugging.
+The tests are designed to be robust against import errors and other issues. If there are problems importing required modules or generating content, the tests will provide descriptive error messages and fallback to simpler operations where possible.
+
+## Example Data
+
+The `data/` directory in the project root contains example markdown plans that can be used for testing, including:
+
+- `test_notebook_plan.md`: A simple test plan
+- `test_writer_notebook_plan.md`: A plan specifically for testing the WriterAgent
+- `agents_sdk_synthetic_transcripts.md`: A more complex plan about OpenAI's Agent APIs
