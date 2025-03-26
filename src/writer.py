@@ -9,6 +9,7 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Any, Union, Tuple
 import os
+import re
 
 import openai
 from openai import OpenAI
@@ -57,18 +58,25 @@ from src.prompts.critic_prompts import (
     CRITIC_EVALUATION_PROMPT,
     FINAL_CRITIQUE_PROMPT,
 )
-from src.format.format_utils import (
+from src.format.prompt_utils import (
     format_subsections_details,
     format_additional_requirements,
     format_previous_content,
+    format_cells_for_evaluation,
+)
+from src.format.markdown_utils import (
     notebook_content_to_markdown,
     notebook_section_to_markdown,
-    format_cells_for_evaluation,
     format_notebook_for_critique,
     markdown_to_notebook_content,
     notebook_plan_to_markdown,
+)
+from src.format.notebook_utils import (
     save_notebook_versions,
     writer_output_to_files,
+    writer_output_to_notebook,
+    notebook_to_writer_output,
+    notebook_dict_to_writer_output,
 )
 from src.searcher import (
     search_with_tavily,
@@ -664,7 +672,7 @@ class WriterAgent:
         generated_content = state["generated_content"]
 
         # Format the generated content for evaluation
-        formatted_content = format_cells_for_evaluation(generated_content.cells)
+        formatted_content = self._format_cells_for_evaluation(generated_content.cells)
         logger.debug(
             f"Formatted content for evaluation with {len(formatted_content)} characters"
         )
@@ -745,7 +753,7 @@ class WriterAgent:
         evaluation = state["evaluation"]
 
         # Format the generated content for revision
-        formatted_content = format_cells_for_evaluation(generated_content.cells)
+        formatted_content = self._format_cells_for_evaluation(generated_content.cells)
         logger.debug(
             f"Formatted content for revision with {len(formatted_content)} characters"
         )
@@ -823,22 +831,8 @@ class WriterAgent:
         Returns:
             str: The formatted cells.
         """
-        logger.debug(f"Formatting {len(cells)} cells for evaluation")
-
-        formatted = ""
-
-        for cell in cells:
-            if cell.cell_type == "markdown":
-                formatted += f"```markdown\n{cell.content}\n```\n\n"
-            else:
-                formatted += f"```python\n{cell.content}\n```\n\n"
-
-        formatted_content = formatted.strip()
-        logger.debug(
-            f"Formatted content for evaluation with {len(formatted_content)} characters"
-        )
-
-        return formatted_content
+        # Use the imported function from format.prompt_utils
+        return format_cells_for_evaluation(cells)
 
     def generate_section_content(
         self,
@@ -943,11 +937,12 @@ class WriterAgent:
         final_critique: str,
     ) -> List[NotebookSectionContent]:
         """
-        Apply final revisions to the notebook based on critique.
+        Apply final revisions to the notebook based on critique using an .ipynb format string.
 
-        This method takes the complete notebook content and the final critique,
-        generates a revised version in JSON format, and then converts it
-        back into the structured NotebookSectionContent format.
+        Instead of saving to temporary files, this method:
+        1. Converts the content to an ipynb format string directly using writer_output_to_notebook
+        2. Passes that string to the LLM with WRITER_FINAL_REVISION_PROMPT
+        3. Directly parses the LLM response back to NotebookSectionContent objects
 
         Args:
             notebook_plan (NotebookPlanModel): The notebook plan.
@@ -957,34 +952,44 @@ class WriterAgent:
         Returns:
             List[NotebookSectionContent]: The revised notebook content.
         """
+        import json
+        import io
+        from src.format.notebook_utils import (
+            writer_output_to_notebook,
+            notebook_dict_to_writer_output,
+        )
+
         logger.info("Performing final revision of the notebook based on critique")
 
-        # Format all sections into a single notebook representation
-        formatted_notebook = format_notebook_for_critique(
-            notebook_plan, section_contents
-        )
-
-        # Prepare the input for the OpenAI API
-        user_prompt = WRITER_FINAL_REVISION_PROMPT.format(
-            notebook_title=notebook_plan.title,
-            notebook_description=notebook_plan.description,
-            notebook_purpose=notebook_plan.purpose,
-            notebook_target_audience=notebook_plan.target_audience,
-            notebook_content=formatted_notebook,
-            final_critique=final_critique,
-        )
-
         try:
-            logger.debug(
-                "Calling OpenAI API for final notebook revision in JSON format"
+            # Convert section_contents to notebook dictionary directly using return_notebook option
+            notebook = writer_output_to_notebook(
+                writer_output=section_contents,
+                notebook_title=notebook_plan.title,
+                return_notebook=True,
             )
 
-            # Use standard chat completion with JSON response format
+            # Convert notebook to JSON string
+            notebook_content = json.dumps(notebook, indent=2)
+
+            # Call the API with WRITER_FINAL_REVISION_PROMPT
+            logger.debug("Calling OpenAI API for notebook revision")
+
+            # Format the prompt with notebook content and critique
+            user_prompt = WRITER_FINAL_REVISION_PROMPT.format(
+                notebook_title=notebook_plan.title,
+                notebook_description=notebook_plan.description,
+                notebook_purpose=notebook_plan.purpose,
+                notebook_target_audience=notebook_plan.target_audience,
+                notebook_content=notebook_content,
+                final_critique=final_critique,
+            )
+
+            # Create message
             messages = [
                 ChatCompletionUserMessageParam(content=user_prompt, role="user"),
             ]
 
-            # Request JSON response format
             response = self.client.chat.completions.create(
                 model="o1-2024-12-17",
                 messages=messages,
@@ -992,116 +997,42 @@ class WriterAgent:
             )
 
             # Extract the revised JSON content
-            revised_json_str = response.choices[0].message.content
-            if revised_json_str is None or not revised_json_str.strip():
+            revised_content = response.choices[0].message.content
+
+            if revised_content is None or not revised_content.strip():
                 logger.warning(
                     "Received empty response from API, using original notebook"
                 )
-                # Return the original content if we get None back
                 return section_contents
 
-            logger.info("Generated revised notebook in JSON format")
+            # Clean up the JSON if necessary
+            if "```json" in revised_content:
+                revised_content = revised_content.split("```json", 1)[1]
+            if "```" in revised_content:
+                revised_content = revised_content.split("```", 1)[0]
 
+            revised_content = revised_content.strip()
+
+            # Parse the revised notebook directly from string
             try:
-                # Parse the JSON string into Python objects
-                import json
-                from pydantic import ValidationError
+                revised_notebook = json.loads(revised_content)
 
-                # Clean up the JSON string if necessary (remove markdown code blocks if present)
-                if "```json" in revised_json_str:
-                    revised_json_str = revised_json_str.split("```json", 1)[1]
-                if "```" in revised_json_str:
-                    revised_json_str = revised_json_str.split("```", 1)[0]
-
-                revised_json_str = revised_json_str.strip()
-
-                # Parse the JSON
-                revised_sections_data = json.loads(revised_json_str)
-
-                # Convert to NotebookSectionContent objects
-                revised_sections = []
-
-                # Check if it's a list of sections or a single notebook content
-                if isinstance(revised_sections_data, list) and all(
-                    isinstance(item, dict) for item in revised_sections_data
-                ):
-                    # If it's a list of cells, create a single section
-                    section_content = NotebookSectionContent(
-                        section_title=(
-                            section_contents[0].section_title
-                            if section_contents
-                            else "Revised Section"
-                        ),
-                        cells=[NotebookCell(**cell) for cell in revised_sections_data],
-                    )
-                    revised_sections = [section_content]
-                elif (
-                    isinstance(revised_sections_data, dict)
-                    and "sections" in revised_sections_data
-                ):
-                    # If it's a dict with sections key, process each section
-                    for section_data in revised_sections_data["sections"]:
-                        section_content = NotebookSectionContent(
-                            section_title=section_data.get(
-                                "section_title", "Untitled Section"
-                            ),
-                            cells=[
-                                NotebookCell(**cell)
-                                for cell in section_data.get("cells", [])
-                            ],
-                        )
-                        revised_sections.append(section_content)
-                else:
-                    # Fallback: try to interpret the JSON structure based on what we received
-                    logger.warning("Unexpected JSON structure, attempting to parse")
-
-                    # Iterate through section_contents to maintain original structure
-                    for i, orig_section in enumerate(section_contents):
-                        # Try to find corresponding section in revised data
-                        matching_section_data = None
-
-                        # If it's a dict with keys matching section titles
-                        if (
-                            isinstance(revised_sections_data, dict)
-                            and orig_section.section_title in revised_sections_data
-                        ):
-                            matching_section_data = revised_sections_data[
-                                orig_section.section_title
-                            ]
-
-                        if matching_section_data and isinstance(
-                            matching_section_data, list
-                        ):
-                            # Create section with cells from matching data
-                            section_content = NotebookSectionContent(
-                                section_title=orig_section.section_title,
-                                cells=[
-                                    NotebookCell(**cell)
-                                    for cell in matching_section_data
-                                ],
-                            )
-                            revised_sections.append(section_content)
-                        else:
-                            # If no matching section found, use the original
-                            logger.warning(
-                                f"No matching revision for section {i+1}, using original"
-                            )
-                            revised_sections.append(orig_section)
+                # Convert the revised notebook dictionary directly to NotebookSectionContent objects
+                # using notebook_dict_to_writer_output with the in-memory notebook dictionary
+                revised_sections = notebook_dict_to_writer_output(revised_notebook)
 
                 logger.info(
-                    f"Successfully parsed JSON to {len(revised_sections)} sections"
+                    f"Successfully revised notebook with {len(revised_sections)} sections"
                 )
                 return revised_sections
 
-            except (json.JSONDecodeError, ValidationError) as e:
+            except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse JSON response: {e}")
-                logger.error(f"Problematic JSON: {revised_json_str[:500]}...")
-                # Return the original content if parsing fails
+                logger.warning("Returning original content due to parsing error")
                 return section_contents
 
         except Exception as e:
-            logger.error(f"Failed to generate final revision: {e}")
-            # Return the original content if revision fails
+            logger.error(f"Failed to revise notebook: {e}")
             logger.warning("Returning original content due to revision error")
             return section_contents
 

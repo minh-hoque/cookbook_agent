@@ -341,82 +341,22 @@ Apply final revisions to a complete Jupyter notebook based on a comprehensive cr
    - Carefully review the final critique to identify key improvement areas.
    - Focus on structural, content, and presentational issues that need attention.
 
-2. **Improve Overall Coherence and Flow:**
-   - Ensure smooth transitions between sections and topics.
-   - Address any logical progression issues highlighted in the critique.
-   - Check that concepts are introduced before they are used.
+2. **Apply the fixes to the original notebook content** while preserving the JSON ipynb format:
+   - Correct technical errors and outdated information
+   - Improve explanations and educational value
+   - Enhance code examples and comments
+   - Address structural and flow issues
 
-3. **Refine Technical Accuracy:**
-   - Correct any technical errors or outdated information.
-   - Ensure code examples follow current best practices for OpenAI APIs.
-   - Verify all API parameters and responses are accurate.
+3. **Perform a final check** for:
+   - Overall coherence and logical flow between sections
+   - Technical accuracy of all API references and code examples
+   - Consistent formatting and presentation
 
-4. **Enhance Educational Value:**
-   - Clarify explanations where the critique indicates confusion.
-   - Add missing context that would improve understanding.
-   - Ensure examples and code snippets are properly explained.
-
-5. **Polish Formatting and Presentation:**
-   - Standardize formatting across the entire notebook.
-   - Ensure consistent heading levels, code styling, and terminology.
-   - Improve readability through better paragraph structure and bullet points where appropriate.
-
-6. **Maintain Original Structure:**
-   - Preserve the original sections and their order.
-   - Keep the core content intact while improving its presentation.
-   - Don't add entirely new sections unless explicitly mentioned in the critique.
-
-7. **Preserve Code Functionality:**
-   - Ensure all revised code maintains its original functionality.
-   - Improve code quality without changing its intended purpose.
-   - Add better comments or documentation where needed.
+4. **Output the complete revised notebook in valid JSON ipynb format** so it can be directly saved and loaded into a Jupyter notebook.
 
 ### **Output Format:**
-You MUST provide the complete revised notebook as a valid JSON object. Your output must be a single JSON object that can be parsed by Python's json.loads() without any errors. DO NOT include markdown code blocks or other decorations around the JSON.
+You MUST provide the complete revised notebook as a valid JSON ipynb format. Your output must be a single JSON object that can be directly saved to a file and loaded into a Jupyter notebook.
 
-A dictionary with sections (if the notebook has multiple sections):
-```
-{{
-    "sections": [
-        {{
-            "section_title": "Section Title 1",
-            "cells": [
-                {{
-                    "cell_type": "markdown",
-                    "content": "Your markdown content here"
-                }},
-                {{
-                    "cell_type": "code",
-                    "content": "Your Python code here"
-                }}
-            ]
-        }},
-        {{
-            "section_title": "Section Title 2",
-            "cells": [
-                {{
-                    "cell_type": "markdown",
-                    "content": "Your markdown content here"
-                }},
-                {{
-                    "cell_type": "code",
-                    "content": "Your Python code here"
-                }}
-            ]
-        }}
-    ]
-}}
-```
-
-For consistency and to ensure proper parsing, please use OPTION 2 (dictionary with sections) if the notebook has multiple distinct sections.
-
-Remember:
-1. Your output must be VALID JSON that can be parsed with json.loads().
-2. DO NOT include any text before or after the JSON.
-3. DO NOT include markdown formatting like ```json or ``` around the JSON.
-4. Ensure all quotes and braces are properly escaped within content strings.
-5. Each cell must have exactly "cell_type" and "content" as keys.
-6. "cell_type" must be either "markdown" or "code".
-
-IMPORTANT: Respond ONLY with valid JSON. Any text outside the JSON will cause parsing errors.
+### **Output:**
+Revised Notebook: 
 """
