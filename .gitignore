@@ -188,3 +188,4 @@ Thumbs.db
 
 # Output
 output/
+.python-version
