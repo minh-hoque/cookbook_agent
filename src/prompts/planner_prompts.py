@@ -48,9 +48,9 @@ Create a **detailed outline** for an educational Jupyter notebook about OpenAI A
 5. Include specific sections for:
    - Setup and prerequisites
    - Concept introduction
-   - Step-by-step demonstrations (without actual code)
+   - Step-by-step demonstrations (with actual code)
    - Practical applications
-   - Summary and next steps
+   - Summary and key takeaways
 
 ### **Expected Output Format:**  
 A structured outline that clearly defines the notebook's sections, their content, and the key points to be covered.  
@@ -86,9 +86,9 @@ Create a **detailed outline** for an educational Jupyter notebook based on the f
 5. Include specific sections for:
    - Setup and prerequisites
    - Concept introduction
-   - Step-by-step demonstrations (without actual code)
+   - Step-by-step demonstrations (with actual code)
    - Practical applications
-   - Summary and next steps
+   - Summary and key takeaways
 
 ### **Expected Output Format:**  
 A structured outline that clearly defines the notebook's sections, their content, and the key points to be covered.  

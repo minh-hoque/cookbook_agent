@@ -365,3 +365,229 @@ class PlannerLLM:
                 )
             ],
         )
+
+    def plan_notebook_with_ui(
+        self,
+        requirements: Dict[str, Any],
+        previous_messages: Optional[List[Dict[str, Any]]] = None,
+        clarification_answers: Optional[Dict[str, str]] = None,
+        search_results: Optional[str] = None,
+    ) -> Union[NotebookPlanModel, List[str]]:
+        """
+        Plan a notebook with UI-compatible clarification handling.
+
+        This method is designed to work with UIs like Streamlit that need to handle
+        async operations through multiple reruns rather than callbacks.
+
+        Args:
+            requirements: A dictionary containing the notebook requirements.
+            previous_messages: Previous chat messages if continuing a conversation.
+            clarification_answers: Answers to previous clarification questions.
+            search_results: Optional string containing search results about the notebook topic.
+
+        Returns:
+            Either a NotebookPlanModel if planning is complete, or a List[str] of
+            clarification questions if user input is needed.
+        """
+        logger.info("Starting plan_notebook_with_ui method")
+        logger.info(f"Received requirements: {requirements}")
+        logger.info(f"Has previous messages: {previous_messages is not None}")
+        logger.info(f"Has clarification answers: {clarification_answers is not None}")
+        logger.info(f"Has search results: {search_results is not None}")
+
+        # Extract requirements
+        description = requirements.get("notebook_description", "Not provided")
+        purpose = requirements.get("notebook_purpose", "Not provided")
+        target_audience = requirements.get("target_audience", "Not provided")
+        code_snippets = requirements.get("code_snippets", [])
+        additional_reqs = requirements.get("additional_requirements", [])
+
+        # Format the requirements for the prompt
+        additional_requirements = format_additional_requirements(additional_reqs)
+        formatted_code_snippets = format_code_snippets(code_snippets)
+        formatted_search_results = "No search results available"
+        if search_results:
+            formatted_search_results = search_results
+
+        # Initialize or use provided message history
+        system_prompt = PLANNING_SYSTEM_PROMPT
+
+        # Initialize messages as List[Dict[str, Any]] to handle all message types
+        messages: List[Dict[str, Any]] = []
+
+        if previous_messages:
+            messages = previous_messages
+            logger.info(f"Using {len(messages)} previous messages")
+        else:
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": PLANNING_PROMPT.format(
+                        description=description,
+                        purpose=purpose,
+                        target_audience=target_audience,
+                        additional_requirements=additional_requirements,
+                        code_snippets=formatted_code_snippets,
+                        search_results=formatted_search_results,
+                    ),
+                },
+            ]
+            logger.info("Created new message history")
+
+        # Store messages in the instance for later retrieval
+        self._current_messages = messages
+
+        # If we have clarification answers from the UI, add them to the messages
+        if clarification_answers and len(messages) >= 3:
+            # Get the assistant message that should contain tool calls
+            assistant_message = messages[-2]
+            if (
+                isinstance(assistant_message, dict)
+                and assistant_message.get("role") == "assistant"
+            ):
+                tool_calls = assistant_message.get("tool_calls", [])
+                if isinstance(tool_calls, list) and tool_calls:
+                    tool_call = tool_calls[0]
+                    if isinstance(tool_call, dict):
+                        tool_call_id = tool_call.get("id")
+
+                        if tool_call_id:
+                            # Add the tool response message
+                            messages.append(
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": tool_call_id,
+                                    "content": json.dumps(clarification_answers),
+                                }
+                            )
+
+                            # Add a new user message with a prompt that includes the clarifications
+                            all_clarifications = clarification_answers  # In this case we only have the current answers
+
+                            clarification_prompt = (
+                                PLANNING_WITH_CLARIFICATION_PROMPT.format(
+                                    description=description,
+                                    purpose=purpose,
+                                    target_audience=target_audience,
+                                    additional_requirements=additional_requirements,
+                                    code_snippets=formatted_code_snippets,
+                                    clarifications=format_clarifications(
+                                        all_clarifications
+                                    ),
+                                    search_results=formatted_search_results,
+                                )
+                            )
+
+                            messages.append(
+                                {
+                                    "role": "user",
+                                    "content": clarification_prompt,
+                                }
+                            )
+
+                            logger.info(
+                                "Added tool response and new user prompt with clarifications"
+                            )
+
+        try:
+            # Convert messages to the format expected by the OpenAI API
+            api_messages = []
+            for msg in messages:
+                if not isinstance(msg, dict):
+                    continue
+
+                role = msg.get("role", "")
+                content = msg.get("content", "")
+
+                api_msg: Dict[str, Any] = {"role": role, "content": content}
+
+                # Add tool_calls if present
+                if "tool_calls" in msg:
+                    api_msg["tool_calls"] = msg["tool_calls"]
+
+                # Add tool_call_id if present
+                if "tool_call_id" in msg:
+                    api_msg["tool_call_id"] = msg["tool_call_id"]
+
+                api_messages.append(api_msg)
+
+            # Make the API call with tools
+            logger.info("Making API call with tools...")
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=api_messages,
+                tools=self.tools,
+                stream=False,
+            )
+
+            message = response.choices[0].message
+            logger.info(f"Received response from model")
+
+            # Check if the model wants to use the clarification tool
+            has_clarification_call = has_tool_call(message, "get_clarifications")
+            logger.info(f"Has clarification tool call: {has_clarification_call}")
+
+            if has_clarification_call and message.tool_calls:
+                # Extract the questions
+                tool_call = message.tool_calls[0]
+                args = extract_tool_arguments(tool_call)
+                questions = args.get("questions", [])
+
+                if questions:
+                    logger.info(f"Extracted {len(questions)} questions")
+
+                    # Add the assistant message to the history as Dict[str, Any]
+                    new_message: Dict[str, Any] = {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": tool_call.id,
+                                "type": "function",
+                                "function": {
+                                    "name": tool_call.function.name,
+                                    "arguments": tool_call.function.arguments,
+                                },
+                            }
+                        ],
+                    }
+                    messages.append(new_message)
+
+                    # Update stored messages
+                    self._current_messages = messages
+
+                    # Return the questions for the UI to handle
+                    return questions
+
+            # No clarification needed, generate the notebook plan
+            logger.info("No clarification needed, generating final plan")
+            notebook_plan = self.client.beta.chat.completions.parse(
+                model=self.model,
+                messages=api_messages,
+                response_format=NotebookPlanModel,
+            )
+
+            parsed_plan = notebook_plan.choices[0].message.parsed
+            if parsed_plan is not None:
+                logger.info("Successfully parsed notebook plan")
+                return parsed_plan
+
+            # If parsed result is None, create an error plan
+            logger.info("Failed to parse notebook plan, returning error plan")
+            return self._create_error_plan("Failed to parse notebook plan")
+
+        except Exception as e:
+            logger.error(f"Error in plan_notebook_with_ui: {e}")
+            return self._create_error_plan(str(e))
+
+    def get_current_messages(self) -> List[Dict[str, Any]]:
+        """
+        Get the current message history.
+
+        Returns:
+            The current message history as a list of message dictionaries.
+        """
+        if hasattr(self, "_current_messages"):
+            return self._current_messages
+        return []

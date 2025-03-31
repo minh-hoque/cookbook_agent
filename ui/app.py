@@ -18,6 +18,7 @@ import streamlit.components.v1 as components
 from queue import Queue
 from threading import Event
 from datetime import datetime
+import logging
 
 # Add the parent directory to sys.path to import from src
 parent_dir = str(Path(__file__).parent.parent)
@@ -34,6 +35,14 @@ from src.models import (
 from src.planner import PlannerLLM
 from src.writer import WriterAgent
 from src.format.plan_format import format_notebook_plan
+from src.tools.debug import DebugLevel
+from src.utils import configure_logging
+
+# Configure logging
+configure_logging(debug_level=DebugLevel.DEBUG)
+
+# Get a logger for this module
+logger = logging.getLogger(__name__)
 
 # Page config
 st.set_page_config(
@@ -174,6 +183,7 @@ st.markdown(
 
 def display_and_edit_plan(notebook_plan: NotebookPlanModel):
     """Display and allow editing of the notebook plan."""
+    logger.info(f"Displaying plan for editing: {notebook_plan.title}")
     st.subheader("Notebook Plan")
 
     # Display plan sections in an editable format
@@ -186,12 +196,14 @@ def display_and_edit_plan(notebook_plan: NotebookPlanModel):
     }
 
     st.subheader("Sections")
+    logger.debug(f"Displaying {len(notebook_plan.sections)} sections for editing")
 
     # Create a container for the sections
     sections_container = st.container()
 
     # Add section button
     if st.button("Add New Section"):
+        logger.info("Adding new section")
         new_section = Section(
             title="New Section", description="Enter section description here"
         )
@@ -200,6 +212,7 @@ def display_and_edit_plan(notebook_plan: NotebookPlanModel):
     # Display each section with edit capabilities
     with sections_container:
         for idx, section in enumerate(notebook_plan.sections):
+            logger.debug(f"Editing section {idx + 1}: {section.title}")
             with st.expander(f"Section {idx + 1}: {section.title}", expanded=True):
                 # Section title
                 section_title = st.text_input(
@@ -219,6 +232,9 @@ def display_and_edit_plan(notebook_plan: NotebookPlanModel):
                 st.subheader("Subsections")
                 subsections = []
                 if section.subsections:
+                    logger.debug(
+                        f"Editing {len(section.subsections)} subsections for section {idx + 1}"
+                    )
                     for sub_idx, subsection in enumerate(section.subsections):
                         st.markdown(f"##### Subsection {sub_idx + 1}")
 
@@ -245,6 +261,9 @@ def display_and_edit_plan(notebook_plan: NotebookPlanModel):
                             "Delete Subsection",
                             key=f"delete_subsection_{idx}_{sub_idx}",
                         ):
+                            logger.info(
+                                f"Deleting subsection {sub_idx + 1} from section {idx + 1}"
+                            )
                             section.subsections.pop(sub_idx)
                             st.rerun()
 
@@ -255,6 +274,7 @@ def display_and_edit_plan(notebook_plan: NotebookPlanModel):
 
                 # Add new subsection button
                 if st.button(f"Add Subsection", key=f"add_subsection_{idx}"):
+                    logger.info(f"Adding new subsection to section {idx + 1}")
                     if not section.subsections:
                         section.subsections = []
                     section.subsections.append(
@@ -271,6 +291,7 @@ def display_and_edit_plan(notebook_plan: NotebookPlanModel):
                 col1, col2, col3 = st.columns(3)
                 with col1:
                     if st.button("Move Up", key=f"up_{idx}") and idx > 0:
+                        logger.info(f"Moving section {idx + 1} up")
                         notebook_plan.sections[idx], notebook_plan.sections[idx - 1] = (
                             notebook_plan.sections[idx - 1],
                             notebook_plan.sections[idx],
@@ -281,6 +302,7 @@ def display_and_edit_plan(notebook_plan: NotebookPlanModel):
                         st.button("Move Down", key=f"down_{idx}")
                         and idx < len(notebook_plan.sections) - 1
                     ):
+                        logger.info(f"Moving section {idx + 1} down")
                         notebook_plan.sections[idx], notebook_plan.sections[idx + 1] = (
                             notebook_plan.sections[idx + 1],
                             notebook_plan.sections[idx],
@@ -288,6 +310,7 @@ def display_and_edit_plan(notebook_plan: NotebookPlanModel):
                         st.rerun()
                 with col3:
                     if st.button("Delete Section", key=f"delete_{idx}"):
+                        logger.info(f"Deleting section {idx + 1}")
                         notebook_plan.sections.pop(idx)
                         st.rerun()
 
@@ -300,6 +323,7 @@ def display_and_edit_plan(notebook_plan: NotebookPlanModel):
                     )
                 )
 
+    logger.info("Plan editing completed")
     return NotebookPlanModel(**edited_plan)
 
 
@@ -307,6 +331,7 @@ def create_notebook_from_cells(
     cells: Sequence[Union[NotebookCell, NotebookSectionContent]], title: str
 ) -> nbformat.NotebookNode:
     """Convert cells to Jupyter notebook format."""
+    logger.debug(f"Creating notebook with title: {title}")
     nb = new_notebook()
 
     # Add title as markdown cell
@@ -328,6 +353,7 @@ def create_notebook_from_cells(
                 else:
                     nb.cells.append(new_code_cell(subcell.content))
 
+    logger.debug(f"Created notebook with {len(nb.cells)} cells")
     return nb
 
 
@@ -335,11 +361,13 @@ def display_notebook_content(
     notebook_content: Sequence[Union[NotebookCell, NotebookSectionContent]], title: str
 ):
     """Display notebook content in different views."""
+    logger.info(f"Displaying notebook content: {title}")
 
     # Create tabs for different views
     tab_md, tab_code, tab_preview = st.tabs(["Markdown", "Code", "Preview"])
 
     with tab_md:
+        logger.debug("Rendering markdown view")
         # Display pure markdown view
         for cell in notebook_content:
             if isinstance(cell, NotebookCell):
@@ -356,6 +384,7 @@ def display_notebook_content(
                         st.code(subcell.content, language="python")
 
     with tab_code:
+        logger.debug("Rendering code view")
         # Display code-focused view with syntax highlighting
         for cell in notebook_content:
             if isinstance(cell, NotebookCell):
@@ -379,6 +408,7 @@ def display_notebook_content(
                         )
 
     with tab_preview:
+        logger.debug("Rendering notebook preview")
         # Create and display notebook preview
         notebook = create_notebook_from_cells(notebook_content, title)
         # Convert notebook to HTML
@@ -387,6 +417,8 @@ def display_notebook_content(
         html_exporter = HTMLExporter()
         html_data, _ = html_exporter.from_notebook_node(notebook)
         components.html(html_data, height=600, scrolling=True)
+
+    logger.debug("Notebook content display completed")
 
 
 def ui_clarification_callback(questions: List[str]) -> Dict[str, str]:
@@ -407,6 +439,7 @@ def ui_clarification_callback(questions: List[str]) -> Dict[str, str]:
 
 def handle_clarifications():
     """Display clarification questions and collect answers."""
+    logger.info("Handling clarification questions")
     questions = st.session_state.clarification_questions
 
     st.info("The AI needs some clarifications before proceeding:")
@@ -431,18 +464,23 @@ def handle_clarifications():
         submit_pressed = st.form_submit_button("Submit Answers")
 
         if submit_pressed:
+            logger.info("Clarification answers submitted")
             if all(answers.values()):  # Check if all questions are answered
                 # Store answers in the all_clarifications dictionary
-                st.session_state.all_clarifications.update(answers)
+                st.session_state.all_clarifications = answers
                 st.session_state.needs_clarification = False
-                print(st.session_state.all_clarifications)
+                logger.debug(
+                    f"Collected answers: {st.session_state.all_clarifications}"
+                )
                 st.rerun()
             else:
+                logger.warning("Not all clarification questions were answered")
                 st.error("Please answer all questions before proceeding.")
 
 
 def save_session_state():
     """Save current session state to a file."""
+    logger.info("Saving session state")
     session_data = {
         "user_requirements": st.session_state.user_requirements,
         "notebook_plan": (
@@ -463,11 +501,13 @@ def save_session_state():
     with open(filename, "w") as f:
         json.dump(session_data, f)
 
+    logger.info(f"Session state saved to {filename}")
     return filename
 
 
 def load_session_state(file_path: str):
     """Load session state from a file."""
+    logger.info(f"Loading session state from {file_path}")
     with open(file_path, "r") as f:
         session_data = json.load(f)
 
@@ -477,10 +517,12 @@ def load_session_state(file_path: str):
             **session_data["notebook_plan"]
         )
     st.session_state.step = session_data["step"]
+    logger.info("Session state loaded successfully")
 
 
 def display_file_management():
     """Display file management section with download options and session management."""
+    logger.info("Displaying file management section")
     st.markdown("### 📁 File Management")
 
     with st.container():
@@ -507,6 +549,7 @@ def display_file_management():
                         mime="text/markdown",
                         help="Download the notebook plan in Markdown format",
                     )
+                logger.debug("Added plan download button")
 
         with col2:
             if st.session_state.notebook_content and st.session_state.notebook_plan:
@@ -522,6 +565,7 @@ def display_file_management():
                     mime="application/x-ipynb+json",
                     help="Download the generated Jupyter notebook",
                 )
+                logger.debug("Added notebook download button")
 
         with col3:
             if st.session_state.notebook_content:
@@ -541,6 +585,7 @@ def display_file_management():
                     mime="text/markdown",
                     help="Download the notebook content in Markdown format",
                 )
+                logger.debug("Added markdown download button")
 
         # Session management
         st.subheader("Session Management")
@@ -549,6 +594,7 @@ def display_file_management():
         with col1:
             if st.button("💾 Save Session"):
                 saved_file = save_session_state()
+                logger.info(f"Session saved to {saved_file}")
                 st.success(f"Session saved to {saved_file}")
 
         with col2:
@@ -563,10 +609,12 @@ def display_file_management():
                     f.write(uploaded_file.getvalue())
                 load_session_state("temp_session.json")
                 os.remove("temp_session.json")
+                logger.info("Session loaded from uploaded file")
                 st.success("Session loaded successfully!")
                 st.rerun()
 
         st.markdown("</div>", unsafe_allow_html=True)
+        logger.debug("File management section display completed")
 
 
 def main():
@@ -580,26 +628,39 @@ def main():
     """
     )
 
+    logger.info("Starting OpenAI Demo Notebook Generator")
+
     # Initialize session state variables
     if "step" not in st.session_state:
         st.session_state.step = 1
+        logger.debug("Initialized step to 1")
     if "user_requirements" not in st.session_state:
         st.session_state.user_requirements = {}
+        logger.debug("Initialized user_requirements")
     if "notebook_plan" not in st.session_state:
         st.session_state.notebook_plan = None
+        logger.debug("Initialized notebook_plan")
     if "notebook_content" not in st.session_state:
         st.session_state.notebook_content = None
+        logger.debug("Initialized notebook_content")
     if "needs_clarification" not in st.session_state:
         st.session_state.needs_clarification = False
+        logger.debug("Initialized needs_clarification")
     if "clarification_questions" not in st.session_state:
         st.session_state.clarification_questions = []
+        logger.debug("Initialized clarification_questions")
     if "all_clarifications" not in st.session_state:
         st.session_state.all_clarifications = {}
+        logger.debug("Initialized all_clarifications")
     if "planner_state" not in st.session_state:
         st.session_state.planner_state = None
+        logger.debug("Initialized planner_state")
+
+    logger.info(f"Current step: {st.session_state.step}")
 
     # Step 1: Input Form
     if st.session_state.step == 1:
+        logger.info("Displaying input form (Step 1)")
         with st.form("notebook_requirements"):
             st.subheader("Notebook Requirements")
 
@@ -631,8 +692,10 @@ def main():
             submitted = st.form_submit_button("Generate Plan")
 
             if submitted:
+                logger.info("Form submitted - validating inputs")
                 # Validate inputs
                 if not description:
+                    logger.warning("No description provided")
                     st.error("Please provide a notebook description.")
                     return
 
@@ -646,54 +709,73 @@ def main():
                         if req.strip()
                     ],
                 }
+                logger.info("User requirements stored in session state")
 
                 # Initialize planner if not already initialized
                 if not st.session_state.planner_state:
+                    logger.info("Initializing new planner")
                     planner = PlannerLLM()
                     st.session_state.planner_state = planner
                 else:
+                    logger.debug("Using existing planner from state")
                     planner = st.session_state.planner_state
 
                 try:
                     with st.spinner("Analyzing requirements and generating plan..."):
+                        logger.info("Starting plan generation")
                         # Check if we need to handle clarifications
                         if st.session_state.needs_clarification:
-                            # Skip this step if we're waiting for user input
+                            logger.info("Waiting for clarification answers")
+                            # We have questions but no answers yet - wait for user input
                             pass
                         else:
-                            # If we have clarifications, use them in a new planning attempt
-                            if st.session_state.all_clarifications:
-                                # Create a copy of the messages with the clarifications
-                                messages = []
+                            # Store messages in session state if not already present
+                            if "previous_messages" not in st.session_state:
+                                st.session_state.previous_messages = None
 
-                                # Prepare user requirements with existing clarifications
-                                # This is just to trigger planning again after getting clarifications
-                                st.session_state.notebook_plan = planner.plan_notebook(
-                                    st.session_state.user_requirements,
-                                    clarification_callback=ui_clarification_callback,
+                            # Get clarification answers if available
+                            clarification_answers = (
+                                st.session_state.all_clarifications
+                                if st.session_state.all_clarifications
+                                else None
+                            )
+
+                            # Call the UI-friendly planning method
+                            logger.info("Calling planner to generate notebook plan")
+                            result = planner.plan_notebook_with_ui(
+                                requirements=st.session_state.user_requirements,
+                                previous_messages=st.session_state.previous_messages,
+                                clarification_answers=clarification_answers,
+                            )
+
+                            # Check if the result is a list of questions or a plan
+                            if isinstance(result, list):
+                                logger.info(
+                                    "Received clarification questions from planner"
                                 )
-
-                                # If no further clarifications needed, move to next step
-                                if not st.session_state.needs_clarification:
-                                    st.session_state.step = 2
-                                    # Clear planner state once done
-                                    st.session_state.planner_state = None
-                                    st.rerun()
+                                # Store questions and current message history
+                                st.session_state.clarification_questions = result
+                                st.session_state.previous_messages = (
+                                    planner.get_current_messages()
+                                )
+                                st.session_state.needs_clarification = True
+                                st.rerun()
                             else:
-                                # First run of planning with no clarifications yet
-                                st.session_state.notebook_plan = planner.plan_notebook(
-                                    st.session_state.user_requirements,
-                                    clarification_callback=ui_clarification_callback,
-                                )
+                                logger.info("Received complete notebook plan")
+                                # We have a complete plan
+                                st.session_state.notebook_plan = result
+                                st.session_state.step = 2
 
-                                # If no clarifications needed, move to next step
-                                if not st.session_state.needs_clarification:
-                                    st.session_state.step = 2
-                                    # Clear planner state once done
-                                    st.session_state.planner_state = None
-                                    st.rerun()
+                                # Clear planner state and message history now that we're done
+                                st.session_state.planner_state = None
+                                st.session_state.previous_messages = None
+                                st.session_state.needs_clarification = False
+                                st.session_state.all_clarifications = {}
+                                logger.debug("Cleared temporary planning state")
+                                st.rerun()
 
                 except Exception as e:
+                    logger.error(f"Error during planning: {str(e)}")
                     st.error(f"Error during planning: {str(e)}")
                     # Clear planner state on error
                     st.session_state.planner_state = None
@@ -701,40 +783,49 @@ def main():
 
     # Step 1.5: Clarifications (if needed)
     if st.session_state.needs_clarification:
+        logger.info("Handling clarification questions (Step 1.5)")
         handle_clarifications()
 
     # Step 2: Plan Display and Editing
     elif st.session_state.step == 2 and st.session_state.notebook_plan:
+        logger.info("Displaying plan for editing (Step 2)")
         # Back button
         if st.button("← Back to Requirements"):
+            logger.info("User clicked back to requirements")
             st.session_state.step = 1
             st.rerun()
 
         # Display and edit the plan
         edited_plan = display_and_edit_plan(st.session_state.notebook_plan)
         st.session_state.notebook_plan = edited_plan
+        logger.debug("Updated notebook plan with edits")
 
         # Continue button
         if st.button("Generate Notebook"):
+            logger.info("User clicked generate notebook")
             st.session_state.step = 3
             st.rerun()
 
     # Step 3: Content Generation and Display
     elif st.session_state.step == 3:
+        logger.info("Starting content generation (Step 3)")
         # Back button
         if st.button("← Back to Plan"):
+            logger.info("User clicked back to plan")
             st.session_state.step = 2
             st.rerun()
 
         # Generate content if not already generated
         if not st.session_state.notebook_content:
             with st.spinner("Generating notebook content..."):
+                logger.info("Initializing content generation")
                 # Initialize progress bar
                 progress_bar = st.progress(0)
                 status_text = st.empty()
 
                 try:
                     # Initialize writer agent
+                    logger.info("Initializing writer agent")
                     writer = WriterAgent(
                         model="gpt-4o",
                         max_retries=3,
@@ -747,6 +838,7 @@ def main():
                     status_text.text(
                         "Analyzing plan and preparing content structure..."
                     )
+                    logger.info("Starting content generation")
 
                     # Generate content
                     result = writer.generate_content(
@@ -761,22 +853,29 @@ def main():
                     # Update progress
                     progress_bar.progress(60)
                     status_text.text("Reviewing and refining generated content...")
+                    logger.info("Content generation completed, processing results")
 
                     # Handle the result (which might be a tuple with critique)
                     if isinstance(result, tuple) and len(result) == 3:
+                        logger.info("Processing content with critique")
                         original_content, critique, revised_content = result
                         st.session_state.notebook_content = revised_content
 
                         # Store critique for display
                         st.session_state.content_critique = critique
                     else:
+                        logger.info("Processing content without critique")
                         st.session_state.notebook_content = result
 
                     # Update progress
                     progress_bar.progress(100)
                     status_text.text("Content generation complete!")
+                    logger.info(
+                        "Content generation and processing completed successfully"
+                    )
 
                 except Exception as e:
+                    logger.error(f"Error generating notebook content: {str(e)}")
                     st.error(f"Error generating notebook content: {str(e)}")
                     return
 
@@ -786,10 +885,12 @@ def main():
 
         # Display the generated content
         if st.session_state.notebook_content and st.session_state.notebook_plan:
+            logger.info("Displaying generated notebook content")
             st.subheader("Generated Notebook")
 
             # Display critique if available
             if hasattr(st.session_state, "content_critique"):
+                logger.debug("Displaying content critique")
                 with st.expander("Content Critique", expanded=False):
                     st.markdown(st.session_state.content_critique)
 
@@ -815,6 +916,7 @@ def main():
                     file_name=f"{st.session_state.notebook_plan.title.replace(' ', '_')}.ipynb",
                     mime="application/x-ipynb+json",
                 )
+                logger.debug("Added Jupyter notebook download button")
 
             with col2:
                 # Create markdown version for download
@@ -833,12 +935,15 @@ def main():
                     file_name=f"{st.session_state.notebook_plan.title.replace(' ', '_')}.md",
                     mime="text/markdown",
                 )
+                logger.debug("Added Markdown download button")
 
     # Add file management section at the bottom of each step after step 1
     if st.session_state.step > 1:
+        logger.debug("Displaying file management section")
         display_file_management()
 
     st.markdown("</div>", unsafe_allow_html=True)
+    logger.debug("Page rendering completed")
 
 
 if __name__ == "__main__":

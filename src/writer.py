@@ -936,6 +936,56 @@ class WriterAgent:
         )
         return final_content
 
+    def _format_markdown_content(self, content: str) -> str:
+        """
+        Format markdown content to ensure proper line breaks and readability.
+
+        Args:
+            content (str): The markdown content to format.
+
+        Returns:
+            str: Properly formatted markdown content.
+        """
+        # Add line break after headers
+        content = re.sub(r"(#+.*?)(\S)", r"\1\n\2", content)
+
+        # Add line breaks between sections
+        content = re.sub(r"(\n#{1,6}.*?\n)", r"\n\1", content)
+
+        # Ensure proper spacing around lists
+        content = re.sub(r"(\n[-*].*?)(\n[^-*\n])", r"\1\n\2", content)
+
+        # Add line breaks around code blocks
+        content = re.sub(r"(```.*?```)", r"\n\1\n", content, flags=re.DOTALL)
+
+        # Ensure proper spacing around paragraphs
+        content = re.sub(r"(\n\n+)", r"\n\n", content)
+
+        return content.strip()
+
+    def _format_notebook_cells(self, cells: List[NotebookCell]) -> List[NotebookCell]:
+        """
+        Format the content of notebook cells to ensure proper formatting.
+
+        Args:
+            cells (List[NotebookCell]): List of notebook cells to format.
+
+        Returns:
+            List[NotebookCell]: Formatted notebook cells.
+        """
+        formatted_cells = []
+        for cell in cells:
+            if cell.cell_type == "markdown":
+                # Format markdown content
+                formatted_content = self._format_markdown_content(cell.content)
+                formatted_cells.append(
+                    NotebookCell(cell_type="markdown", content=formatted_content)
+                )
+            else:
+                # Keep code cells as is
+                formatted_cells.append(cell)
+        return formatted_cells
+
     def _final_revision(
         self,
         notebook_plan: NotebookPlanModel,
@@ -1053,11 +1103,22 @@ class WriterAgent:
 
             # Step 8: Convert the parsed JSON to NotebookSectionContent objects
             revised_sections = notebook_dict_to_writer_output(revised_notebook)
+
+            # Step 9: Format the content of each section
+            formatted_sections = []
+            for section in revised_sections:
+                formatted_cells = self._format_notebook_cells(section.cells)
+                formatted_sections.append(
+                    NotebookSectionContent(
+                        section_title=section.section_title, cells=formatted_cells
+                    )
+                )
+
             logger.info(
-                f"Successfully revised notebook with {len(revised_sections)} sections"
+                f"Successfully revised and formatted notebook with {len(formatted_sections)} sections"
             )
 
-            return revised_sections
+            return formatted_sections
 
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse JSON response: {e}")
