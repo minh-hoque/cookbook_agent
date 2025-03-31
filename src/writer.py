@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any, Union, Tuple
 import os
 import re
+import shutil
 
 import openai
 from openai import OpenAI
@@ -70,6 +71,7 @@ from src.format.markdown_utils import (
     format_notebook_for_critique,
     markdown_to_notebook_content,
     notebook_plan_to_markdown,
+    json_string_to_markdown,
 )
 from src.format.notebook_utils import (
     save_notebook_versions,
@@ -109,6 +111,7 @@ class WriterAgent:
         max_retries: int = 3,
         search_enabled: bool = True,
         final_critique_enabled: bool = True,
+        search_context_size: str = "low",
     ):
         """
         Initialize the Writer Agent.
@@ -118,6 +121,7 @@ class WriterAgent:
             max_retries (int, optional): Maximum number of retries for content generation. Defaults to 3.
             search_enabled (bool, optional): Whether to enable search functionality. Defaults to True.
             final_critique_enabled (bool, optional): Whether to perform a final critique of the complete notebook. Defaults to True.
+            search_context_size (str, optional): Size of search context to use ("low", "medium", or "high"). Defaults to "low".
         """
         logger.info(f"Initializing WriterAgent with model: {model}")
 
@@ -126,6 +130,7 @@ class WriterAgent:
         self.max_retries = max_retries
         self.search_enabled = search_enabled
         self.final_critique_enabled = final_critique_enabled
+        self.search_context_size = search_context_size
 
         # Create the OpenAI client
         try:
@@ -502,6 +507,7 @@ class WriterAgent:
                 search_results = search_with_openai(
                     search_query=query_text,
                     model=self.model,
+                    search_context_size=self.search_context_size,
                     client=self.client,  # Pass the existing client
                 )
                 formatted_results = format_openai_search_results(search_results)
@@ -943,6 +949,8 @@ class WriterAgent:
         1. Converts the content to an ipynb format string directly using writer_output_to_notebook
         2. Passes that string to the LLM with WRITER_FINAL_REVISION_PROMPT
         3. Directly parses the LLM response back to NotebookSectionContent objects
+        4. Also saves a markdown version of the response regardless of parsing success
+        5. If parsing fails, saves the raw LLM response and returns original content
 
         Args:
             notebook_plan (NotebookPlanModel): The notebook plan.
@@ -950,32 +958,41 @@ class WriterAgent:
             final_critique (str): The critique of the notebook from the final review.
 
         Returns:
-            List[NotebookSectionContent]: The revised notebook content.
+            List[NotebookSectionContent]: The revised notebook content or original content if revision fails.
         """
         import json
-        import io
+        import os
         from src.format.notebook_utils import (
             writer_output_to_notebook,
             notebook_dict_to_writer_output,
         )
+        from src.format.markdown_utils import json_string_to_markdown
 
         logger.info("Performing final revision of the notebook based on critique")
 
+        # Create a temp directory to store processing artifacts
+        temp_dir = os.path.join(os.getcwd(), "output", "temp")
+        os.makedirs(temp_dir, exist_ok=True)
+        logger.debug(f"Created temp directory at {temp_dir}")
+
         try:
-            # Convert section_contents to notebook dictionary directly using return_notebook option
+            # Step 1: Convert section_contents to notebook dictionary
+            logger.debug(
+                f"Converting {len(section_contents)} sections to notebook dictionary"
+            )
             notebook = writer_output_to_notebook(
                 writer_output=section_contents,
                 notebook_title=notebook_plan.title,
                 return_notebook=True,
             )
 
-            # Convert notebook to JSON string
+            # Step 2: Convert notebook to JSON string
             notebook_content = json.dumps(notebook, indent=2)
+            logger.debug(
+                f"Converted notebook to JSON string ({len(notebook_content)} characters)"
+            )
 
-            # Call the API with WRITER_FINAL_REVISION_PROMPT
-            logger.debug("Calling OpenAI API for notebook revision")
-
-            # Format the prompt with notebook content and critique
+            # Step 3: Format the prompt with notebook content and critique
             user_prompt = WRITER_FINAL_REVISION_PROMPT.format(
                 notebook_title=notebook_plan.title,
                 notebook_description=notebook_plan.description,
@@ -984,56 +1001,96 @@ class WriterAgent:
                 notebook_content=notebook_content,
                 final_critique=final_critique,
             )
+            logger.debug(
+                f"Formatted prompt for final revision ({len(user_prompt)} characters)"
+            )
 
-            # Create message
+            # Step 4: Create message and call the OpenAI API
             messages = [
                 ChatCompletionUserMessageParam(content=user_prompt, role="user"),
             ]
 
+            logger.debug("Calling OpenAI API with model o1-2024-12-17")
             response = self.client.chat.completions.create(
                 model="o1-2024-12-17",
                 messages=messages,
                 response_format={"type": "json_object"},
             )
+            logger.debug("Received response from OpenAI API")
 
-            # Extract the revised JSON content
+            # Step 5: Extract and validate the revised JSON content
             revised_content = response.choices[0].message.content
 
+            # Check for empty response
             if revised_content is None or not revised_content.strip():
                 logger.warning(
                     "Received empty response from API, using original notebook"
                 )
                 return section_contents
 
-            # Clean up the JSON if necessary
-            if "```json" in revised_content:
-                revised_content = revised_content.split("```json", 1)[1]
-            if "```" in revised_content:
-                revised_content = revised_content.split("```", 1)[0]
+            # Step 6: Save the raw response for debugging and recovery
+            raw_response_path = os.path.join(temp_dir, "final_revision_response.json")
+            with open(raw_response_path, "w") as f:
+                f.write(revised_content)
+            logger.info(f"Saved raw LLM response to {raw_response_path}")
 
-            revised_content = revised_content.strip()
+            # Step 7: Clean up and parse the JSON
+            logger.debug("Starting JSON cleanup and parsing process")
+            cleaned_content = revised_content.strip()
 
-            # Parse the revised notebook directly from string
-            try:
-                revised_notebook = json.loads(revised_content)
+            # Remove any markdown code block indicators if present
+            if cleaned_content.startswith("```json"):
+                cleaned_content = cleaned_content.split("```json", 1)[1]
+            if cleaned_content.startswith("```"):
+                cleaned_content = cleaned_content.split("```", 1)[1]
+            if cleaned_content.endswith("```"):
+                cleaned_content = cleaned_content.rsplit("```", 1)[0]
+            cleaned_content = cleaned_content.strip()
 
-                # Convert the revised notebook dictionary directly to NotebookSectionContent objects
-                # using notebook_dict_to_writer_output with the in-memory notebook dictionary
-                revised_sections = notebook_dict_to_writer_output(revised_notebook)
+            # Attempt to parse JSON
+            revised_notebook = json.loads(cleaned_content)
+            logger.debug("Successfully parsed JSON content")
 
-                logger.info(
-                    f"Successfully revised notebook with {len(revised_sections)} sections"
-                )
-                return revised_sections
+            # Step 8: Convert the parsed JSON to NotebookSectionContent objects
+            revised_sections = notebook_dict_to_writer_output(revised_notebook)
+            logger.info(
+                f"Successfully revised notebook with {len(revised_sections)} sections"
+            )
 
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse JSON response: {e}")
-                logger.warning("Returning original content due to parsing error")
-                return section_contents
+            return revised_sections
+
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse JSON response: {e}")
+
+            # Save the problematic content for debugging
+            error_path = os.path.join(temp_dir, "json_parse_error.txt")
+            with open(error_path, "w") as f:
+                f.write(f"Error: {str(e)}\n\n")
+                if "cleaned_content" in locals() and cleaned_content is not None:
+                    f.write("Content that failed to parse:\n\n")
+                    f.write(cleaned_content)
+                elif "revised_content" in locals() and revised_content is not None:
+                    f.write("Raw content from API:\n\n")
+                    f.write(revised_content)
+            logger.info(f"Saved error details to {error_path}")
+
+            # Return the original content
+            logger.warning(
+                "Using original notebook content due to JSON parsing failure"
+            )
+            return section_contents
 
         except Exception as e:
-            logger.error(f"Failed to revise notebook: {e}")
-            logger.warning("Returning original content due to revision error")
+            logger.error(f"Unexpected error during final revision: {e}")
+
+            # Save error information
+            error_path = os.path.join(temp_dir, "unexpected_error.txt")
+            with open(error_path, "w") as f:
+                f.write(f"Error: {str(e)}\n")
+            logger.info(f"Saved error details to {error_path}")
+
+            # Return the original content in case of any errors
+            logger.warning("Using original notebook content due to unexpected error")
             return section_contents
 
     def generate_content(

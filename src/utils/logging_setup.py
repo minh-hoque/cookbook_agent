@@ -9,21 +9,15 @@ from typing import Optional
 from src.tools.debug import DebugLevel, setup_logging
 
 
-def configure_logging(
-    debug_level: DebugLevel = DebugLevel.INFO,
-    log_file: Optional[str] = None,
-    append: bool = True,
-) -> None:
+def configure_logging(debug_level: DebugLevel = DebugLevel.INFO) -> None:
     """
     Configure the logging system.
 
     Args:
         debug_level: The debug level (ERROR, INFO, DEBUG)
-        log_file: Optional path to log file
-        append: Whether to append to existing log file or create new one
     """
     # Initialize logging
-    setup_logging(level=debug_level, log_file=log_file, append=append)
+    setup_logging(level=debug_level)
 
     # Reduce logging for external libraries to WARNING or higher
     logging.getLogger("httpcore").setLevel(logging.WARNING)

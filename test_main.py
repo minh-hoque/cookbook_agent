@@ -163,7 +163,9 @@ print(completion.choices[0].message.content)
 
             print(f"\nSearching for information about: {notebook_description}")
             logger.debug(f"Searching for topic: {notebook_description}")
-            search_results = search_with_openai(notebook_description)
+            search_results = search_with_openai(
+                notebook_description, search_context_size="low"
+            )
 
             if "error" in search_results:
                 logger.warning(f"Search error: {search_results['error']}")

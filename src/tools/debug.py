@@ -80,14 +80,12 @@ class ColoredFormatter(logging.Formatter):
         return super().format(colored_record)
 
 
-def setup_logging(level=DebugLevel.INFO, log_file=None, append=True):
+def setup_logging(level=DebugLevel.INFO):
     """
     Set up application-wide logging configuration.
 
     Args:
         level: The DebugLevel to use
-        log_file: Optional path to a log file
-        append: If True, append to existing log file; if False, create a new file
     """
     # Convert our enum to logging level
     log_level = level.value
@@ -116,26 +114,6 @@ def setup_logging(level=DebugLevel.INFO, log_file=None, append=True):
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(console_formatter)
     root_logger.addHandler(console_handler)
-
-    # Create file handler if requested
-    if log_file:
-        # Create directory for log file if it doesn't exist
-        log_dir = os.path.dirname(log_file)
-        if log_dir and not os.path.exists(log_dir):
-            os.makedirs(log_dir)
-
-        # Create file formatter (no colors)
-        file_format = "[%(asctime)s] %(levelname)s | %(pathname)s:%(lineno)d | %(funcName)s() | %(message)s"
-        file_formatter = logging.Formatter(file_format, datefmt="%Y-%m-%d %H:%M:%S")
-
-        # Create file handler
-        file_mode = "a" if append else "w"
-        file_handler = logging.FileHandler(log_file, mode=file_mode)
-        file_handler.setFormatter(file_formatter)
-        root_logger.addHandler(file_handler)
-
-        # Log file configuration
-        logging.info(f"Log file configured at: {os.path.abspath(log_file)}")
 
     # Log initial setup
     logging.info(f"Logging initialized with level: {level.name}")

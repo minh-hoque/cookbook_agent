@@ -357,6 +357,59 @@ Apply final revisions to a complete Jupyter notebook based on a comprehensive cr
 ### **Output Format:**
 You MUST provide the complete revised notebook as a valid JSON ipynb format. Your output must be a single JSON object that can be directly saved to a file and loaded into a Jupyter notebook.
 
+Example format:
+```json
+{{
+  "metadata": {{
+    "kernelspec": {{
+      "display_name": "Python 3",
+      "language": "python",
+      "name": "python3"
+    }},
+    "language_info": {{
+      "codemirror_mode": {{
+        "name": "ipython",
+        "version": 3
+      }},
+      "file_extension": ".py",
+      "mimetype": "text/x-python",
+      "name": "python",
+      "nbconvert_exporter": "python",
+      "pygments_lexer": "ipython3",
+      "version": "3.8.0"
+    }}
+  }},
+  "nbformat": 4,
+  "nbformat_minor": 4,
+  "cells": [
+    {{
+      "cell_type": "markdown",
+      "metadata": {{}},
+      "source": [
+        "# Using Predicted Outputs with OpenAI APIs: A Tutorial for Machine Learning Engineers"
+      ]
+    }},
+    {{
+      "cell_type": "markdown",
+      "metadata": {{}},
+      "source": [
+        "## Overview of OpenAI APIs"
+      ]
+    }},
+    {{
+      "cell_type": "code",
+      "metadata": {{
+        "execution_count": null,
+        "outputs": []
+      }},
+      "source": [
+        "# Example code cell\nimport openai\n\n# Set up your API key\nopenai.api_key = os.getenv('OPENAI_API_KEY')"
+      ]
+    }}
+  ]
+}}
+```
+
 ### **Output:**
 Revised Notebook: 
 """

@@ -46,17 +46,6 @@ def parse_arguments():
         default="INFO",
     )
     parser.add_argument(
-        "--log-file",
-        help="Path to log file. If not specified, logs will only go to console.",
-        default=None,
-    )
-    parser.add_argument(
-        "--no-append",
-        action="store_true",
-        help="Create a new log file instead of appending to existing one",
-        default=False,
-    )
-    parser.add_argument(
         "--test-logging",
         action="store_true",
         help="Run a test of the logging system and exit",
@@ -81,17 +70,8 @@ def setup_logging_from_args(args):
         # Convert string to DebugLevel enum
         debug_level = DebugLevel[args.debug]
 
-        # Handle auto log file path
-        log_file_path = args.log_file
-        if log_file_path == "auto":
-            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            log_dir = os.path.join(os.getcwd(), "logs")
-            log_file_path = os.path.join(log_dir, f"notebook_gen_{timestamp}.log")
-
         # Initialize logging
-        configure_logging(
-            debug_level=debug_level, log_file=log_file_path, append=not args.no_append
-        )
+        configure_logging(debug_level=debug_level)
 
         # Test logging if requested
         if args.test_logging:
@@ -108,7 +88,9 @@ def setup_logging_from_args(args):
         return True
 
 
-def search_for_topic_info(notebook_description: str) -> Optional[str]:
+def search_for_topic_info(
+    notebook_description: str, search_context_size: str = "low"
+) -> Optional[str]:
     """
     Search for information about the notebook topic using OpenAI's web search capability.
 
@@ -131,7 +113,9 @@ def search_for_topic_info(notebook_description: str) -> Optional[str]:
         from src.searcher import search_with_openai, format_openai_search_results
 
         print(f"\nSearching for information about: {notebook_description}")
-        search_results = search_with_openai(notebook_description)
+        search_results = search_with_openai(
+            notebook_description, search_context_size=search_context_size
+        )
 
         if "error" in search_results and search_results["error"]:
             logger.warning(f"Search error: {search_results['error']}")
@@ -193,6 +177,7 @@ def generate_notebook_content(
     additional_requirements: list,
     model: str,
     output_dir: str,
+    search_context_size: str = "low",
 ) -> bool:
     """
     Generate notebook content based on the plan.
@@ -210,7 +195,11 @@ def generate_notebook_content(
     try:
         # Initialize the writer agent
         writer = WriterAgent(
-            model=model, max_retries=3, search_enabled=True, final_critique_enabled=True
+            model=model,
+            max_retries=3,
+            search_enabled=True,
+            final_critique_enabled=True,
+            search_context_size=search_context_size,
         )
         logger.debug("WriterAgent initialized successfully")
 
@@ -312,7 +301,9 @@ def main():
 
     # Search for information about the notebook topic
     notebook_description = user_requirements.get("notebook_description", "")
-    search_results = search_for_topic_info(notebook_description)
+    search_results = search_for_topic_info(
+        notebook_description, search_context_size="low"
+    )
 
     # Create notebook plan
     notebook_plan = create_notebook_plan(user_requirements, search_results)
@@ -330,7 +321,7 @@ def main():
 
     # Save the plan to a file
     notebook_title = notebook_plan.title
-    plan_file = os.path.join(output_dir, f"{notebook_title.replace(' ', '_')}.md")
+    plan_file = os.path.join(output_dir, f"{notebook_title.replace(' ', '_')}_plan.md")
     try:
         save_plan_to_file(notebook_plan, plan_file)
         print(f"\nNotebook plan saved to {plan_file}")

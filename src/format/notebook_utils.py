@@ -319,7 +319,7 @@ def writer_output_to_files(
     # Convert to each requested format
     for fmt in formats:
         if fmt.lower() == "ipynb":
-            output_file = os.path.join(output_dir, f"{base_filename}.ipynb")
+            output_file = os.path.join(output_dir, f"{base_filename}_final.ipynb")
             if writer_output_to_notebook(
                 writer_output, output_file, notebook_title=notebook_title
             ):
@@ -338,7 +338,7 @@ def writer_output_to_files(
                         results["ipynb_original"] = original_output_file
 
         elif fmt.lower() == "py":
-            output_file = os.path.join(output_dir, f"{base_filename}.py")
+            output_file = os.path.join(output_dir, f"{base_filename}_final.py")
             if writer_output_to_python_script(writer_output, output_file):
                 results["py"] = output_file
 
@@ -353,7 +353,7 @@ def writer_output_to_files(
                         results["py_original"] = original_output_file
 
         elif fmt.lower() == "md":
-            output_file = os.path.join(output_dir, f"{base_filename}.md")
+            output_file = os.path.join(output_dir, f"{base_filename}_final.md")
             markdown = writer_output_to_markdown(writer_output, output_file)
             if markdown:
                 results["md"] = output_file
