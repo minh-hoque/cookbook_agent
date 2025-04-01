@@ -148,12 +148,26 @@ def writer_output_to_notebook(
         for section in writer_output:
             # Process each cell in the section
             for cell in section.cells:
+                # Split the content by newlines to create a list of lines
+                # This ensures proper formatting in the notebook
+                lines = cell.content.split("\n")
+
+                # For empty lines, we need to ensure they're preserved as empty strings
+                # rather than being converted to None or dropped
+                source_lines = []
+                for i, line in enumerate(lines):
+                    if i < len(lines) - 1:
+                        source_lines.append(line + "\n")
+                    else:
+                        # Don't add newline to the last line
+                        source_lines.append(line)
+
                 if cell.cell_type == "markdown":
                     notebook["cells"].append(
                         {
                             "cell_type": "markdown",
                             "metadata": {},
-                            "source": cell.content.split("\n"),
+                            "source": source_lines,
                         }
                     )
                 elif cell.cell_type == "code":
@@ -161,7 +175,7 @@ def writer_output_to_notebook(
                         {
                             "cell_type": "code",
                             "metadata": {"execution_count": None, "outputs": []},
-                            "source": cell.content.split("\n"),
+                            "source": source_lines,
                             "execution_count": None,
                             "outputs": [],
                         }
@@ -436,20 +450,23 @@ def notebook_dict_to_writer_output(
         current_section_cells = []
         sections = []
 
+        # Function to process cell source to ensure consistent formatting
+        def process_cell_source(source):
+            if isinstance(source, list):
+                # Join the lines with proper line breaks
+                return "".join(source)
+            return source
+
         # Function to detect section headers in markdown cells
         def is_section_header(source, level):
-            # Join the source lines and check for markdown header
-            text = (
-                "".join(source).strip() if isinstance(source, list) else source.strip()
-            )
+            # Process the source to ensure consistent format
+            text = process_cell_source(source).strip()
             header_pattern = f"^{'#' * level} "
             return bool(re.match(header_pattern, text))
 
         # Function to extract header text
         def extract_header_text(source, level):
-            text = (
-                "".join(source).strip() if isinstance(source, list) else source.strip()
-            )
+            text = process_cell_source(source).strip()
             header_pattern = f"^{'#' * level} (.*)"
             match = re.match(header_pattern, text)
             if match:
@@ -478,7 +495,7 @@ def notebook_dict_to_writer_output(
                 current_section_cells = []
 
                 # Add this cell to the current section
-                cell_content = "".join(source) if isinstance(source, list) else source
+                cell_content = process_cell_source(source)
                 current_section_cells.append(
                     NotebookCell(cell_type="markdown", content=cell_content)
                 )
@@ -488,7 +505,7 @@ def notebook_dict_to_writer_output(
                     current_section = "Introduction"
 
                 # Add this cell to the current section
-                cell_content = "".join(source) if isinstance(source, list) else source
+                cell_content = process_cell_source(source)
                 current_section_cells.append(
                     NotebookCell(cell_type=cell_type, content=cell_content)
                 )
@@ -507,7 +524,7 @@ def notebook_dict_to_writer_output(
             for cell in notebook_cells:
                 cell_type = cell.get("cell_type")
                 source = cell.get("source", "")
-                cell_content = "".join(source) if isinstance(source, list) else source
+                cell_content = process_cell_source(source)
                 all_cells.append(
                     NotebookCell(cell_type=cell_type, content=cell_content)
                 )

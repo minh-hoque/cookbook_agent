@@ -696,10 +696,9 @@ def display_file_management():
                             use_container_width=True,
                         )
                     # Clean up the temporary file after creating the button
-                    # os.remove(plan_file_path)
-                    # logger.debug(f"Removed temporary plan file: {plan_file_path}")
-                    # Note: Keeping the file might be useful for persistence/debugging
-                    # If removal is desired, uncomment the lines above.
+                    os.remove(plan_file_path)
+                    logger.debug(f"Removed temporary plan file: {plan_file_path}")
+
                 except Exception as e:
                     logger.error(f"Error preparing plan for download: {e}")
                     st.error("Could not prepare plan for download.")
@@ -916,25 +915,8 @@ def main():
     if st.session_state.step == 1:
         logger.info("Displaying input form (Step 1)")
 
-        # Add custom CSS for the card style
-        st.markdown(
-            """
-        <style>
-        .requirements-card {
-            background: white;
-            border: 1px solid rgba(55, 53, 47, 0.1);
-            border-radius: 4px;
-            box-shadow: rgba(15, 15, 15, 0.03) 0px 1px 3px;
-            padding: 28px;
-            margin-bottom: 24px;
-        }
-        </style>
-        """,
-            unsafe_allow_html=True,
-        )
-
         # Create a container with card styling that wraps everything
-        st.markdown('<div class="requirements-card">', unsafe_allow_html=True)
+        st.markdown("<div>", unsafe_allow_html=True)
         st.markdown(
             '<h2 style="margin-top: 0; color: #2F3437; font-size: 1.5rem; margin-bottom: 1.5rem;">Notebook Requirements</h2>',
             unsafe_allow_html=True,
@@ -1125,6 +1107,15 @@ def main():
         if st.button("← Back to Requirements"):
             logger.info("User clicked back to requirements")
             st.session_state.step = 1
+            # Reset plan when going back to requirements
+            st.session_state.notebook_plan = None
+            # Also reset any generated content
+            st.session_state.notebook_content = None
+            if hasattr(st.session_state, "content_critique"):
+                delattr(st.session_state, "content_critique")
+            logger.debug(
+                "Reset notebook plan and content when returning to requirements"
+            )
             st.rerun()
 
         # Display and edit the plan
@@ -1145,6 +1136,11 @@ def main():
         if st.button("← Back to Plan"):
             logger.info("User clicked back to plan")
             st.session_state.step = 2
+            # Reset generated content when going back to plan
+            st.session_state.notebook_content = None
+            if hasattr(st.session_state, "content_critique"):
+                delattr(st.session_state, "content_critique")
+            logger.debug("Reset notebook content when returning to plan")
             st.rerun()
 
         # Generate content if not already generated
@@ -1265,44 +1261,6 @@ def main():
             display_notebook_content(
                 st.session_state.notebook_content, st.session_state.notebook_plan.title
             )
-
-            # Add download buttons
-            st.subheader("Download Options")
-            col1, col2 = st.columns(2)
-
-            with col1:
-                # Create .ipynb file for download
-                notebook = create_notebook_from_cells(
-                    st.session_state.notebook_content,
-                    st.session_state.notebook_plan.title,
-                )
-                notebook_json = nbformat.writes(notebook)
-                st.download_button(
-                    "Download Jupyter Notebook",
-                    notebook_json,
-                    file_name=f"{st.session_state.notebook_plan.title.replace(' ', '_')}.ipynb",
-                    mime="application/x-ipynb+json",
-                )
-                logger.debug("Added Jupyter notebook download button")
-
-            with col2:
-                # Create markdown version for download
-                markdown_content = []
-                for cell in st.session_state.notebook_content:
-                    if isinstance(cell, NotebookCell):
-                        markdown_content.append(cell.content)
-                    elif isinstance(cell, NotebookSectionContent):
-                        markdown_content.append(f"## {cell.section_title}")
-                        for subcell in cell.cells:
-                            markdown_content.append(subcell.content)
-
-                st.download_button(
-                    "Download Markdown",
-                    "\n\n".join(markdown_content),
-                    file_name=f"{st.session_state.notebook_plan.title.replace(' ', '_')}.md",
-                    mime="text/markdown",
-                )
-                logger.debug("Added Markdown download button")
 
     # Add file management section at the bottom of each step after step 1
     if st.session_state.step > 1:
