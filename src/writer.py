@@ -1096,21 +1096,21 @@ class WriterAgent:
             # Step 8: Convert the parsed JSON to NotebookSectionContent objects
             revised_sections = notebook_dict_to_writer_output(revised_notebook)
 
-            # Step 9: Format the content of each section
-            formatted_sections = []
-            for section in revised_sections:
-                formatted_cells = self._format_notebook_cells(section.cells)
-                formatted_sections.append(
-                    NotebookSectionContent(
-                        section_title=section.section_title, cells=formatted_cells
-                    )
-                )
+            # # Step 9: Format the content of each section
+            # formatted_sections = []
+            # for section in revised_sections:
+            #     formatted_cells = self._format_notebook_cells(section.cells)
+            #     formatted_sections.append(
+            #         NotebookSectionContent(
+            #             section_title=section.section_title, cells=formatted_cells
+            #         )
+            #     )
 
             logger.info(
-                f"Successfully revised and formatted notebook with {len(formatted_sections)} sections"
+                f"Successfully revised and formatted notebook with {len(revised_sections)} sections"
             )
 
-            return formatted_sections
+            return revised_sections
 
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse JSON response: {e}")

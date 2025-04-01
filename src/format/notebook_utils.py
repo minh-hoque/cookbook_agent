@@ -150,7 +150,11 @@ def writer_output_to_notebook(
             for cell in section.cells:
                 # Split the content by newlines to create a list of lines
                 # This ensures proper formatting in the notebook
+                print("cell.content")
+                print(cell.content)
                 lines = cell.content.split("\n")
+                print("lines")
+                print(lines)
 
                 # For empty lines, we need to ensure they're preserved as empty strings
                 # rather than being converted to None or dropped
@@ -163,11 +167,22 @@ def writer_output_to_notebook(
                         source_lines.append(line)
 
                 if cell.cell_type == "markdown":
+                    # Fix section header formatting - ensure no extra newlines after hashtags
+                    fixed_source_lines = []
+                    for line in source_lines:
+                        # If line starts with hashtags (MD header) followed by a newline
+                        # Replace it with a properly formatted header
+                        line = re.sub(r"^(#+)\s*\n", r"\1 ", line)
+                        fixed_source_lines.append(line)
+
+                    print("fixed_source_lines")
+                    print(fixed_source_lines)
+
                     notebook["cells"].append(
                         {
                             "cell_type": "markdown",
                             "metadata": {},
-                            "source": source_lines,
+                            "source": fixed_source_lines,
                         }
                     )
                 elif cell.cell_type == "code":

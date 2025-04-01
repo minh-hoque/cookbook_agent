@@ -573,6 +573,35 @@ def handle_clarifications():
 def save_session_state():
     """Save current session state to a file."""
     logger.info("Saving session state")
+
+    # Convert notebook content to serializable format if it exists
+    notebook_content_serialized = None
+    if st.session_state.notebook_content:
+        notebook_content_serialized = []
+        for cell in st.session_state.notebook_content:
+            if isinstance(cell, NotebookCell):
+                notebook_content_serialized.append(
+                    {
+                        "type": "cell",
+                        "cell_type": cell.cell_type,
+                        "content": cell.content,
+                    }
+                )
+            elif isinstance(cell, NotebookSectionContent):
+                section_cells = []
+                for subcell in cell.cells:
+                    section_cells.append(
+                        {"cell_type": subcell.cell_type, "content": subcell.content}
+                    )
+                notebook_content_serialized.append(
+                    {
+                        "type": "section",
+                        "section_title": cell.section_title,
+                        "cells": section_cells,
+                    }
+                )
+
+    # Prepare all session data
     session_data = {
         "user_requirements": st.session_state.user_requirements,
         "notebook_plan": (
@@ -580,20 +609,28 @@ def save_session_state():
             if st.session_state.notebook_plan
             else None
         ),
+        "notebook_content": notebook_content_serialized,
         "step": st.session_state.step,
+        "content_critique": getattr(st.session_state, "content_critique", None),
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "all_clarifications": getattr(st.session_state, "all_clarifications", {}),
     }
 
     # Create output/sessions directory if it doesn't exist
     output_session_dir = "output/sessions"
     os.makedirs(output_session_dir, exist_ok=True)
 
-    # Save with timestamp inside output/sessions
+    # Create a user-friendly filename with timestamp and notebook title if available
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"session_{timestamp}.json"
+    title_suffix = ""
+    if st.session_state.notebook_plan and st.session_state.notebook_plan.title:
+        title_suffix = f"_{st.session_state.notebook_plan.title.replace(' ', '_')[:30]}"
+
+    filename = f"session_{timestamp}{title_suffix}.json"
     file_path = os.path.join(output_session_dir, filename)
 
     with open(file_path, "w") as f:
-        json.dump(session_data, f)
+        json.dump(session_data, f, indent=2)
 
     logger.info(f"Session state saved to {file_path}")
     return file_path
@@ -606,13 +643,67 @@ def load_session_state(file_path: str):
         with open(file_path, "r") as f:
             session_data = json.load(f)
 
+        # Basic session data
         st.session_state.user_requirements = session_data["user_requirements"]
+
+        # Load notebook plan if it exists
         if session_data["notebook_plan"]:
             st.session_state.notebook_plan = NotebookPlanModel(
                 **session_data["notebook_plan"]
             )
-        st.session_state.step = session_data["step"]
-        logger.info("Session state loaded successfully")
+        else:
+            st.session_state.notebook_plan = None
+
+        # Load notebook content if it exists
+        if session_data.get("notebook_content"):
+            notebook_content = []
+            for item in session_data["notebook_content"]:
+                if item["type"] == "cell":
+                    notebook_content.append(
+                        NotebookCell(
+                            cell_type=item["cell_type"], content=item["content"]
+                        )
+                    )
+                elif item["type"] == "section":
+                    cells = [
+                        NotebookCell(
+                            cell_type=cell["cell_type"], content=cell["content"]
+                        )
+                        for cell in item["cells"]
+                    ]
+                    notebook_content.append(
+                        NotebookSectionContent(
+                            section_title=item["section_title"], cells=cells
+                        )
+                    )
+            st.session_state.notebook_content = notebook_content
+        else:
+            st.session_state.notebook_content = None
+
+        # Load content critique if it exists
+        if "content_critique" in session_data and session_data["content_critique"]:
+            st.session_state.content_critique = session_data["content_critique"]
+        elif hasattr(st.session_state, "content_critique"):
+            delattr(st.session_state, "content_critique")
+
+        # Load clarifications if they exist
+        if "all_clarifications" in session_data:
+            st.session_state.all_clarifications = session_data["all_clarifications"]
+
+        # Determine the appropriate step based on what's available
+        if session_data.get("notebook_content"):
+            # If we have content, we're at step 3
+            st.session_state.step = 3
+        elif session_data.get("notebook_plan"):
+            # If we have a plan but no content, we're at step 2
+            st.session_state.step = 2
+        else:
+            # Otherwise, we're at step 1
+            st.session_state.step = 1
+
+        logger.info(
+            f"Session loaded successfully. Placing user at step {st.session_state.step}"
+        )
         return True
     except FileNotFoundError:
         logger.error(f"Session file not found: {file_path}")
