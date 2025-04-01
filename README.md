@@ -1,5 +1,7 @@
 # Cookbook Agent
 
+![img](./image/cookbook_agent_image.png)
+
 ![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
 
 An AI-powered agent system for generating high-quality educational Jupyter notebooks about OpenAI APIs and AI development concepts.
@@ -234,13 +236,6 @@ python -m src.tests.test_searcher
 # Test the format utilities
 python -m src.tests.test_format
 ```
-
-### Common Issues
-
-- **"OpenAI API key not found"**: Set your API key in the `.env` file or as an environment variable
-- **Import errors**: Make sure you've activated your virtual environment and installed with `pip install -e .`
-- **Module not found errors**: Check that all dependencies were installed with `pip install -r requirements.txt`
-- **"tavily-python not installed"**: Install it with `pip install tavily-python` for search functionality
 
 ## 🤝 Contributing
 

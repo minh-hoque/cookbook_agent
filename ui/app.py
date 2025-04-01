@@ -37,6 +37,10 @@ from src.format.plan_format import format_notebook_plan
 from src.tools.debug import DebugLevel
 from src.utils import configure_logging
 from ui.styles import NOTION_STYLE
+from src.format.notebook_utils import (
+    save_notebook_versions,
+    writer_output_to_notebook,
+)
 
 # Configure logging
 configure_logging(debug_level=DebugLevel.DEBUG)
@@ -419,7 +423,7 @@ def display_notebook_content(
     logger.info(f"Displaying notebook content: {title}")
 
     # Create tabs for different views
-    tab_md, tab_code, tab_preview = st.tabs(["Markdown", "Code", "Preview"])
+    tab_md, tab_code, tab_notebook = st.tabs(["Markdown", "Code", "Notebook"])
 
     with tab_md:
         logger.debug("Rendering markdown view")
@@ -462,7 +466,7 @@ def display_notebook_content(
                             unsafe_allow_html=True,
                         )
 
-    with tab_preview:
+    with tab_notebook:
         logger.debug("Rendering notebook preview")
         # Create and display notebook preview
         notebook = create_notebook_from_cells(notebook_content, title)
@@ -909,10 +913,9 @@ def main():
         # Use a Notion-like card for the form
         st.markdown(
             """
-            <div class="notion-card" style="padding: 28px; margin-bottom: 24px;">
+            <div class="notion-card" style="padding: 28px; margin-bottom: 24px; background: white; border: 1px solid rgba(55, 53, 47, 0.1); border-radius: 4px; box-shadow: rgba(15, 15, 15, 0.03) 0px 1px 3px;">
                 <h2 style="margin-top: 0; color: #2F3437; font-size: 1.5rem; margin-bottom: 1.5rem;">Notebook Requirements</h2>
-            </div>
-        """,
+            """,
             unsafe_allow_html=True,
         )
 
@@ -1054,6 +1057,9 @@ def main():
                     st.session_state.planner_state = None
                     return
 
+        # Close the notion-card div after the form
+        st.markdown("</div>", unsafe_allow_html=True)
+
     # Step 1.5: Clarifications (if needed)
     if st.session_state.needs_clarification:
         logger.info("Handling clarification questions (Step 1.5)")
@@ -1129,16 +1135,50 @@ def main():
                     status_text.text("Reviewing and refining generated content...")
                     logger.info("Content generation completed, processing results")
 
-                    # Handle the result (which might be a tuple with critique)
-                    if isinstance(result, tuple) and len(result) == 3:
-                        logger.info("Processing content with critique")
-                        original_content, critique, revised_content = result
-                        st.session_state.notebook_content = revised_content
+                    # Define temporary output directory and ensure it exists
+                    temp_output_dir = "output/temp"
+                    os.makedirs(temp_output_dir, exist_ok=True)
 
-                        # Store critique for display
-                        st.session_state.content_critique = critique
+                    # Check if plan exists before accessing title
+                    if st.session_state.notebook_plan:
+                        notebook_title = st.session_state.notebook_plan.title
                     else:
-                        logger.info("Processing content without critique")
+                        logger.error(
+                            "Notebook plan is missing in step 3 during temp saving."
+                        )
+                        # Handle error case: use a default title
+                        notebook_title = "Untitled_Notebook"
+
+                    # Save notebook versions to the temporary directory
+                    if isinstance(result, tuple) and len(result) == 3:
+                        original_content, critique, revised_content = result
+                        logger.info(
+                            f"Saving original and revised notebook versions to {temp_output_dir}"
+                        )
+                        save_notebook_versions(
+                            original_content=original_content,
+                            revised_content=revised_content,
+                            critique=critique,
+                            output_dir=temp_output_dir,
+                            notebook_title=notebook_title,
+                            formats=["ipynb"],  # Only save as notebook
+                        )
+                        st.session_state.notebook_content = revised_content
+                        st.session_state.content_critique = critique  # Store critique
+                    else:
+                        # Only final content exists, save it directly
+                        logger.info(
+                            f"Saving final notebook version to {temp_output_dir}"
+                        )
+                        notebook_filepath = os.path.join(
+                            temp_output_dir,
+                            f"{notebook_title.replace(' ', '_')}_revised.ipynb",
+                        )
+                        writer_output_to_notebook(
+                            result,  # This is the final content
+                            notebook_filepath,
+                            notebook_title=notebook_title,
+                        )
                         st.session_state.notebook_content = result
 
                     # Update progress
@@ -1166,7 +1206,7 @@ def main():
             if hasattr(st.session_state, "content_critique"):
                 logger.debug("Displaying content critique")
                 with st.expander("Content Critique", expanded=False):
-                    st.markdown(st.session_state.content_critique)
+                    st.code(st.session_state.content_critique, language="markdown")
 
             # Display the notebook content
             display_notebook_content(
