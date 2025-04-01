@@ -31,12 +31,12 @@ from src.models import (
     NotebookCell,
     NotebookSectionContent,
 )
-
 from src.planner import PlannerLLM
 from src.writer import WriterAgent
 from src.format.plan_format import format_notebook_plan
 from src.tools.debug import DebugLevel
 from src.utils import configure_logging
+from ui.styles import NOTION_STYLE
 
 # Configure logging
 configure_logging(debug_level=DebugLevel.DEBUG)
@@ -53,190 +53,200 @@ st.set_page_config(
 )
 
 # Add Notion-like styling
-st.markdown(
-    """
-<style>
-    /* Global Notion-like styles */
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-    
-    /* Main container styles */
-    .main {
-        font-family: 'Inter', sans-serif;
-        color: rgb(55, 53, 47);
-        line-height: 1.5;
-        max-width: 1200px;
-        margin: 0 auto;
-    }
-    
-    /* Headers */
-    h1, h2, h3, h4, h5, h6 {
-        font-family: 'Inter', sans-serif;
-        font-weight: 600;
-        color: rgb(55, 53, 47);
-        margin-bottom: 1rem;
-    }
-    
-    /* Text areas and inputs */
-    .stTextArea textarea, .stTextInput input {
-        font-family: 'Inter', sans-serif;
-        border-radius: 3px;
-        border: 1px solid rgba(55, 53, 47, 0.16);
-        padding: 12px;
-    }
-    
-    .stTextArea textarea:focus, .stTextInput input:focus {
-        border-color: rgb(45, 170, 219);
-        box-shadow: rgba(45, 170, 219, 0.3) 0px 0px 0px 2px;
-    }
-    
-    /* Buttons */
-    .stButton button {
-        font-family: 'Inter', sans-serif;
-        font-weight: 500;
-        background: rgb(45, 170, 219);
-        color: white;
-        border: none;
-        padding: 8px 16px;
-        border-radius: 3px;
-        transition: background 0.2s;
-    }
-    
-    .stButton button:hover {
-        background: rgb(35, 131, 226);
-    }
-    
-    /* Expanders */
-    .streamlit-expanderHeader {
-        font-family: 'Inter', sans-serif;
-        font-weight: 500;
-        color: rgb(55, 53, 47);
-        background: rgba(55, 53, 47, 0.03);
-        border-radius: 3px;
-    }
-    
-    /* Cards */
-    .notion-card {
-        background: white;
-        border: 1px solid rgba(55, 53, 47, 0.16);
-        border-radius: 3px;
-        padding: 16px;
-        margin: 8px 0;
-    }
-    
-    /* Progress bars */
-    .stProgress > div > div {
-        background-color: rgb(45, 170, 219);
-    }
-    
-    /* Tabs */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 1px;
-        background-color: rgba(55, 53, 47, 0.05);
-        padding: 0px;
-        border-radius: 3px;
-    }
-
-    .stTabs [data-baseweb="tab"] {
-        padding: 10px 20px;
-        background-color: transparent;
-        border: none;
-        color: rgb(55, 53, 47);
-    }
-
-    .stTabs [data-baseweb="tab"]:hover {
-        background-color: rgba(55, 53, 47, 0.05);
-    }
-
-    .stTabs [data-baseweb="tab"][aria-selected="true"] {
-        background-color: rgba(45, 170, 219, 0.1);
-        color: rgb(45, 170, 219);
-    }
-    
-    /* Code blocks */
-    .highlight {
-        background: rgb(247, 246, 243);
-        border-radius: 3px;
-        padding: 16px;
-        margin: 8px 0;
-    }
-    
-    /* File management section */
-    .file-management {
-        background: white;
-        border: 1px solid rgba(55, 53, 47, 0.16);
-        border-radius: 3px;
-        padding: 20px;
-        margin: 20px 0;
-    }
-    
-    .download-button {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin: 8px 0;
-    }
-</style>
-""",
-    unsafe_allow_html=True,
-)
+st.markdown(NOTION_STYLE, unsafe_allow_html=True)
 
 
 def display_and_edit_plan(notebook_plan: NotebookPlanModel):
     """Display and allow editing of the notebook plan."""
     logger.info(f"Displaying plan for editing: {notebook_plan.title}")
-    st.subheader("Notebook Plan")
 
-    # Display plan sections in an editable format
+    # Create a clean, well-organized layout
+    st.markdown(
+        """
+        <div style="padding: 0; margin-bottom: 2rem;">
+            <h2 style="color: #2F3437; font-size: 1.8rem; letter-spacing: -0.02em; margin-top: 0.5rem; margin-bottom: 1rem;">
+                📝 Notebook Plan
+            </h2>
+            <p style="color: rgba(55, 53, 47, 0.7); font-size: 1rem; margin-top: 0; margin-bottom: 1.5rem;">
+                Define the structure and content of your notebook
+            </p>
+        </div>
+    """,
+        unsafe_allow_html=True,
+    )
+
+    # Create columns for the main plan metadata
+    col1, col2 = st.columns([2, 1])
+
+    with col1:
+        title = st.text_input(
+            "Title",
+            notebook_plan.title,
+            placeholder="Enter a concise, descriptive title",
+            help="A clear title helps users understand the notebook's purpose at a glance",
+        )
+
+    with col2:
+        # Define options list first
+        audience_options = [
+            "Beginners",
+            "Intermediate",
+            "Advanced",
+            "Experts",
+            "Machine Learning Engineers",
+            "Data Scientists",
+            "Software Engineers",
+            "Researchers",
+            "Students",
+        ]
+        # Get index of current audience in the options list, or default to 0
+        current_audience_index = (
+            audience_options.index(notebook_plan.target_audience)
+            if notebook_plan.target_audience in audience_options
+            else 0
+        )
+
+        target_audience = st.selectbox(
+            "Target Audience",
+            options=audience_options,
+            index=current_audience_index,
+            help="Who is this notebook designed for?",
+        )
+
+    # Description and purpose
+    with st.expander("Description & Purpose", expanded=True):
+        col1, col2 = st.columns(2)
+
+        with col1:
+            description = st.text_area(
+                "Description",
+                notebook_plan.description,
+                height=150,
+                placeholder="Provide a comprehensive description of the notebook...",
+                help="What does this notebook demonstrate or teach?",
+            )
+
+        with col2:
+            purpose = st.text_area(
+                "Purpose",
+                notebook_plan.purpose,
+                height=150,
+                placeholder="Explain the purpose and goals of this notebook...",
+                help="Why would someone use this notebook? What will they learn or accomplish?",
+            )
+
+    # Store the edited metadata
     edited_plan = {
-        "title": st.text_input("Title", notebook_plan.title),
-        "description": st.text_area("Description", notebook_plan.description),
-        "purpose": st.text_area("Purpose", notebook_plan.purpose),
-        "target_audience": notebook_plan.target_audience,
+        "title": title,
+        "description": description,
+        "purpose": purpose,
+        "target_audience": target_audience,
         "sections": [],
     }
 
-    st.subheader("Sections")
-    logger.debug(f"Displaying {len(notebook_plan.sections)} sections for editing")
+    # Section management
+    st.markdown(
+        """
+        <div style="margin-top: 2rem; margin-bottom: 1rem;">
+            <h3 style="color: #2F3437; font-size: 1.4rem; letter-spacing: -0.01em; margin-bottom: 0.5rem;">
+                Notebook Sections
+            </h3>
+            <p style="color: rgba(55, 53, 47, 0.7); font-size: 0.9rem; margin-top: 0; margin-bottom: 1rem;">
+                Build your notebook structure by adding, editing, and organizing sections below
+            </p>
+        </div>
+    """,
+        unsafe_allow_html=True,
+    )
+
+    # Add section button - make it more visually prominent
+    add_col1, add_col2 = st.columns([6, 1])
+    with add_col2:
+        if st.button("➕ Add Section", type="primary"):
+            logger.info("Adding new section")
+            new_section = Section(
+                title="New Section", description="Enter section description here"
+            )
+            notebook_plan.sections.append(new_section)
+            st.rerun()
+
+    # If there are no sections, show a helpful message
+    if not notebook_plan.sections:
+        st.info(
+            "Your notebook doesn't have any sections yet. Click 'Add Section' to get started."
+        )
 
     # Create a container for the sections
     sections_container = st.container()
-
-    # Add section button
-    if st.button("Add New Section"):
-        logger.info("Adding new section")
-        new_section = Section(
-            title="New Section", description="Enter section description here"
-        )
-        notebook_plan.sections.append(new_section)
 
     # Display each section with edit capabilities
     with sections_container:
         for idx, section in enumerate(notebook_plan.sections):
             logger.debug(f"Editing section {idx + 1}: {section.title}")
-            with st.expander(f"Section {idx + 1}: {section.title}", expanded=True):
-                # Section title
+
+            # Create a card-like container for each section
+            st.markdown(
+                f"""
+                <div style="background: white; border: 1px solid rgba(55, 53, 47, 0.1); border-radius: 4px; 
+                      margin-bottom: 16px; overflow: hidden; box-shadow: rgba(15, 15, 15, 0.03) 0px 1px 3px;">
+                    <div style="background: #F7F8F9; padding: 12px 16px; border-bottom: 1px solid rgba(55, 53, 47, 0.08);">
+                        <h4 style="margin: 0; color: #2F3437; font-size: 1rem;">Section {idx + 1}</h4>
+                    </div>
+                </div>
+            """,
+                unsafe_allow_html=True,
+            )
+
+            with st.expander(f"{section.title}", expanded=True):
+                # Section title with improved styling
                 section_title = st.text_input(
-                    f"Section Title ###{idx}", section.title, key=f"section_title_{idx}"
+                    "Section Title",
+                    section.title,
+                    key=f"section_title_{idx}",
+                    placeholder="Enter a clear, concise section title",
+                    help="Good section titles help readers navigate your notebook",
                 )
 
-                # Section description
+                # Section description with improved styling
                 section_description = st.text_area(
-                    f"Section Description ###{idx}",
+                    "Section Description",
                     section.description,
-                    height=150,
+                    height=120,
                     key=f"section_description_{idx}",
+                    placeholder="Describe what this section covers and its learning objectives...",
+                    help="A detailed description helps you plan the content for this section",
                 )
 
-                # Subsections
-                st.markdown("---")  # Visual separator
-                st.subheader("Subsections")
+                # Subsections area with improved organization
+                st.markdown(
+                    """
+                    <div style="margin: 24px 0 16px 0;">
+                        <h5 style="color: #2F3437; font-size: 1rem; margin-bottom: 0.8rem; padding-bottom: 8px; border-bottom: 1px solid rgba(55, 53, 47, 0.1);">
+                            Subsections
+                        </h5>
+                    </div>
+                """,
+                    unsafe_allow_html=True,
+                )
+
                 subsections = []
                 if section.subsections:
                     logger.debug(
                         f"Editing {len(section.subsections)} subsections for section {idx + 1}"
                     )
+
+                    # Create a clean table-like layout for subsections
                     for sub_idx, subsection in enumerate(section.subsections):
-                        st.markdown(f"##### Subsection {sub_idx + 1}")
+                        st.markdown(
+                            f"""
+                            <div style="padding: 12px; background: #F7F8F9; border-radius: 4px; margin-bottom: 14px; border: 1px solid rgba(55, 53, 47, 0.05);">
+                                <div style="font-size: 0.95rem; font-weight: 500; color: #2F3437; margin-bottom: 6px;">
+                                    Subsection {sub_idx + 1}
+                                </div>
+                            </div>
+                        """,
+                            unsafe_allow_html=True,
+                        )
 
                         # Create two columns for title and description
                         col1, col2 = st.columns([1, 2])
@@ -246,6 +256,7 @@ def display_and_edit_plan(notebook_plan: NotebookPlanModel):
                                 "Title",
                                 subsection.title,
                                 key=f"subsection_title_{idx}_{sub_idx}",
+                                placeholder="Subsection title",
                             )
 
                         with col2:
@@ -253,27 +264,42 @@ def display_and_edit_plan(notebook_plan: NotebookPlanModel):
                                 "Description",
                                 subsection.description,
                                 key=f"subsection_desc_{idx}_{sub_idx}",
-                                height=100,
+                                height=80,
+                                placeholder="Describe the subsection content...",
                             )
 
-                        # Add delete button for subsection
-                        if st.button(
-                            "Delete Subsection",
-                            key=f"delete_subsection_{idx}_{sub_idx}",
-                        ):
-                            logger.info(
-                                f"Deleting subsection {sub_idx + 1} from section {idx + 1}"
-                            )
-                            section.subsections.pop(sub_idx)
-                            st.rerun()
+                        # Improved delete button with confirmation
+                        delete_col1, delete_col2 = st.columns([3, 1])
+                        with delete_col2:
+                            if st.button(
+                                "🗑️ Delete",
+                                key=f"delete_subsection_{idx}_{sub_idx}",
+                                type="secondary",
+                                help="Remove this subsection",
+                            ):
+                                logger.info(
+                                    f"Deleting subsection {sub_idx + 1} from section {idx + 1}"
+                                )
+                                section.subsections.pop(sub_idx)
+                                st.rerun()
 
-                        st.markdown("---")  # Visual separator between subsections
+                        st.markdown(
+                            "<hr style='margin: 15px 0; opacity: 0.2;'>",
+                            unsafe_allow_html=True,
+                        )
                         subsections.append(
                             SubSection(title=sub_title, description=sub_description)
                         )
 
-                # Add new subsection button
-                if st.button(f"Add Subsection", key=f"add_subsection_{idx}"):
+                # More elegant add subsection button
+                st.markdown(
+                    "<div style='margin: 16px 0;'></div>", unsafe_allow_html=True
+                )
+                if st.button(
+                    "➕ Add Subsection",
+                    key=f"add_subsection_{idx}",
+                    help="Add a new subsection to this section",
+                ):
                     logger.info(f"Adding new subsection to section {idx + 1}")
                     if not section.subsections:
                         section.subsections = []
@@ -285,31 +311,60 @@ def display_and_edit_plan(notebook_plan: NotebookPlanModel):
                     )
                     st.rerun()
 
-                st.markdown("---")  # Visual separator
+                st.markdown(
+                    "<div style='margin: 24px 0 8px 0;'></div>", unsafe_allow_html=True
+                )
 
-                # Section controls
-                col1, col2, col3 = st.columns(3)
+                # Section controls in a more visually organized footer
+                st.markdown(
+                    """
+                    <div style="background: #F7F8F9; padding: 14px; border-radius: 4px; border: 1px solid rgba(55, 53, 47, 0.05);">
+                        <div style="font-size: 0.85rem; color: rgba(55, 53, 47, 0.6); margin-bottom: 10px;">
+                            Section Controls
+                        </div>
+                    </div>
+                """,
+                    unsafe_allow_html=True,
+                )
+
+                # Improved section control buttons layout
+                col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
+
                 with col1:
-                    if st.button("Move Up", key=f"up_{idx}") and idx > 0:
-                        logger.info(f"Moving section {idx + 1} up")
-                        notebook_plan.sections[idx], notebook_plan.sections[idx - 1] = (
-                            notebook_plan.sections[idx - 1],
-                            notebook_plan.sections[idx],
-                        )
-                        st.rerun()
+                    if idx > 0:
+                        if st.button("⬆️ Move Up", key=f"up_{idx}"):
+                            logger.info(f"Moving section {idx + 1} up")
+                            (
+                                notebook_plan.sections[idx],
+                                notebook_plan.sections[idx - 1],
+                            ) = (
+                                notebook_plan.sections[idx - 1],
+                                notebook_plan.sections[idx],
+                            )
+                            st.rerun()
+                    else:
+                        st.markdown("&nbsp;")  # Placeholder for empty button
+
                 with col2:
-                    if (
-                        st.button("Move Down", key=f"down_{idx}")
-                        and idx < len(notebook_plan.sections) - 1
+                    if idx < len(notebook_plan.sections) - 1:
+                        if st.button("⬇️ Move Down", key=f"down_{idx}"):
+                            logger.info(f"Moving section {idx + 1} down")
+                            (
+                                notebook_plan.sections[idx],
+                                notebook_plan.sections[idx + 1],
+                            ) = (
+                                notebook_plan.sections[idx + 1],
+                                notebook_plan.sections[idx],
+                            )
+                            st.rerun()
+                    else:
+                        st.markdown("&nbsp;")  # Placeholder for empty button
+
+                with col4:
+                    # Dangerous actions should be on the right and stand out less visually
+                    if st.button(
+                        "🗑️ Delete Section", key=f"delete_{idx}", type="secondary"
                     ):
-                        logger.info(f"Moving section {idx + 1} down")
-                        notebook_plan.sections[idx], notebook_plan.sections[idx + 1] = (
-                            notebook_plan.sections[idx + 1],
-                            notebook_plan.sections[idx],
-                        )
-                        st.rerun()
-                with col3:
-                    if st.button("Delete Section", key=f"delete_{idx}"):
                         logger.info(f"Deleting section {idx + 1}")
                         notebook_plan.sections.pop(idx)
                         st.rerun()
@@ -460,19 +515,52 @@ def handle_clarifications():
             )
             answers[question] = answer
 
-        # Submit button
+        # Submit button with centered styling
+        st.markdown("<div style='text-align: center;'>", unsafe_allow_html=True)
         submit_pressed = st.form_submit_button("Submit Answers")
+        st.markdown("</div>", unsafe_allow_html=True)
 
         if submit_pressed:
             logger.info("Clarification answers submitted")
             if all(answers.values()):  # Check if all questions are answered
                 # Store answers in the all_clarifications dictionary
                 st.session_state.all_clarifications = answers
-                st.session_state.needs_clarification = False
-                logger.debug(
-                    f"Collected answers: {st.session_state.all_clarifications}"
-                )
-                st.rerun()
+
+                # Get the existing planner
+                planner = st.session_state.planner_state
+                if planner:
+                    try:
+                        with st.spinner(
+                            "Processing clarifications and updating plan..."
+                        ):
+                            # Call the planner with the clarification answers
+                            result = planner.plan_notebook_with_ui(
+                                requirements=st.session_state.user_requirements,
+                                previous_messages=st.session_state.previous_messages,
+                                clarification_answers=answers,
+                            )
+
+                            # Check if we need more clarifications or have a plan
+                            if isinstance(result, list):
+                                # More questions needed
+                                st.session_state.clarification_questions = result
+                                st.session_state.previous_messages = (
+                                    planner.get_current_messages()
+                                )
+                                st.rerun()
+                            else:
+                                # We have a complete plan
+                                st.session_state.notebook_plan = result
+                                st.session_state.step = 2
+                                st.session_state.needs_clarification = False
+                                st.session_state.planner_state = None
+                                st.session_state.previous_messages = None
+                                st.session_state.all_clarifications = {}
+                                st.rerun()
+                    except Exception as e:
+                        logger.error(f"Error processing clarifications: {str(e)}")
+                        st.error(f"Error processing clarifications: {str(e)}")
+                        return
             else:
                 logger.warning("Not all clarification questions were answered")
                 st.error("Please answer all questions before proceeding.")
@@ -491,65 +579,126 @@ def save_session_state():
         "step": st.session_state.step,
     }
 
-    # Create sessions directory if it doesn't exist
-    os.makedirs("sessions", exist_ok=True)
+    # Create output/sessions directory if it doesn't exist
+    output_session_dir = "output/sessions"
+    os.makedirs(output_session_dir, exist_ok=True)
 
-    # Save with timestamp
+    # Save with timestamp inside output/sessions
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"sessions/session_{timestamp}.json"
+    filename = f"session_{timestamp}.json"
+    file_path = os.path.join(output_session_dir, filename)
 
-    with open(filename, "w") as f:
+    with open(file_path, "w") as f:
         json.dump(session_data, f)
 
-    logger.info(f"Session state saved to {filename}")
-    return filename
+    logger.info(f"Session state saved to {file_path}")
+    return file_path
 
 
 def load_session_state(file_path: str):
     """Load session state from a file."""
     logger.info(f"Loading session state from {file_path}")
-    with open(file_path, "r") as f:
-        session_data = json.load(f)
+    try:
+        with open(file_path, "r") as f:
+            session_data = json.load(f)
 
-    st.session_state.user_requirements = session_data["user_requirements"]
-    if session_data["notebook_plan"]:
-        st.session_state.notebook_plan = NotebookPlanModel(
-            **session_data["notebook_plan"]
-        )
-    st.session_state.step = session_data["step"]
-    logger.info("Session state loaded successfully")
+        st.session_state.user_requirements = session_data["user_requirements"]
+        if session_data["notebook_plan"]:
+            st.session_state.notebook_plan = NotebookPlanModel(
+                **session_data["notebook_plan"]
+            )
+        st.session_state.step = session_data["step"]
+        logger.info("Session state loaded successfully")
+        return True
+    except FileNotFoundError:
+        logger.error(f"Session file not found: {file_path}")
+        st.error(f"Error: Session file not found at {file_path}")
+        return False
+    except json.JSONDecodeError:
+        logger.error(f"Error decoding JSON from session file: {file_path}")
+        st.error("Error: Could not read the session file. It might be corrupted.")
+        return False
+    except Exception as e:
+        logger.error(f"Error loading session state: {str(e)}")
+        st.error(f"An unexpected error occurred while loading the session: {str(e)}")
+        return False
 
 
 def display_file_management():
     """Display file management section with download options and session management."""
     logger.info("Displaying file management section")
-    st.markdown("### 📁 File Management")
 
+    st.markdown(
+        """
+        <div style="margin: 40px 0 20px 0;">
+            <h3 style="color: #2F3437; font-size: 1.4rem; letter-spacing: -0.01em; margin-bottom: 0.5rem;">
+                📁 File Management
+            </h3>
+            <p style="color: rgba(55, 53, 47, 0.7); font-size: 0.9rem; margin-top: 0; margin-bottom: 1.5rem;">
+                Save and download files, or load a previous session
+            </p>
+        </div>
+    """,
+        unsafe_allow_html=True,
+    )
+
+    # File management in a Notion-like card
     with st.container():
+        # Add a Notion-like card styling
         st.markdown('<div class="file-management">', unsafe_allow_html=True)
 
         # Download files section
-        st.subheader("Download Files")
+        st.markdown(
+            """
+            <h4 style="color: #2F3437; font-size: 1.2rem; margin-top: 0;">
+                Download Files
+            </h4>
+            <p style="color: rgba(55, 53, 47, 0.7); font-size: 0.9rem; margin-bottom: 1.2rem;">
+                Download your notebook in various formats
+            </p>
+        """,
+            unsafe_allow_html=True,
+        )
+
+        # Create a clean grid for download buttons
         col1, col2, col3 = st.columns(3)
 
         with col1:
             if st.session_state.notebook_plan:
-                # Save plan to file
-                plan_file = (
+                # Define output directory and ensure it exists
+                output_dir = "output"
+                os.makedirs(output_dir, exist_ok=True)
+
+                # Save plan to file inside output directory
+                plan_file_name = (
                     f"{st.session_state.notebook_plan.title.replace(' ', '_')}_plan.md"
                 )
-                with open(plan_file, "w") as f:
-                    f.write(format_notebook_plan(st.session_state.notebook_plan))
+                plan_file_path = os.path.join(output_dir, plan_file_name)
 
-                with open(plan_file, "r") as f:
-                    st.download_button(
-                        "📄 Download Plan",
-                        f.read(),
-                        file_name=plan_file,
-                        mime="text/markdown",
-                        help="Download the notebook plan in Markdown format",
+                try:
+                    with open(plan_file_path, "w") as f:
+                        f.write(format_notebook_plan(st.session_state.notebook_plan))
+                    logger.debug(
+                        f"Plan temporarily saved to {plan_file_path} for download"
                     )
-                logger.debug("Added plan download button")
+
+                    with open(plan_file_path, "r") as f:
+                        st.download_button(
+                            "📄 Download Plan",
+                            f.read(),
+                            file_name=plan_file_name,  # Use only filename for download button
+                            mime="text/markdown",
+                            help="Download the notebook plan in Markdown format",
+                            use_container_width=True,
+                        )
+                    # Clean up the temporary file after creating the button
+                    # os.remove(plan_file_path)
+                    # logger.debug(f"Removed temporary plan file: {plan_file_path}")
+                    # Note: Keeping the file might be useful for persistence/debugging
+                    # If removal is desired, uncomment the lines above.
+                except Exception as e:
+                    logger.error(f"Error preparing plan for download: {e}")
+                    st.error("Could not prepare plan for download.")
 
         with col2:
             if st.session_state.notebook_content and st.session_state.notebook_plan:
@@ -564,6 +713,7 @@ def display_file_management():
                     file_name=f"{st.session_state.notebook_plan.title.replace(' ', '_')}.ipynb",
                     mime="application/x-ipynb+json",
                     help="Download the generated Jupyter notebook",
+                    use_container_width=True,
                 )
                 logger.debug("Added notebook download button")
 
@@ -584,48 +734,95 @@ def display_file_management():
                     file_name=f"{st.session_state.notebook_plan.title.replace(' ', '_')}.md",
                     mime="text/markdown",
                     help="Download the notebook content in Markdown format",
+                    use_container_width=True,
                 )
                 logger.debug("Added markdown download button")
 
         # Session management
-        st.subheader("Session Management")
+        st.markdown(
+            """
+            <div style="margin: 30px 0 15px 0;">
+                <h4 style="color: #2F3437; font-size: 1.2rem; margin-bottom: 0.5rem;">
+                    Session Management
+                </h4>
+                <p style="color: rgba(55, 53, 47, 0.7); font-size: 0.9rem; margin-bottom: 1.2rem;">
+                    Save your progress or load a previous session
+                </p>
+            </div>
+        """,
+            unsafe_allow_html=True,
+        )
+
+        # Use columns for better organization
         col1, col2 = st.columns(2)
 
         with col1:
-            if st.button("💾 Save Session"):
+            # Save session button with improved styling
+            if st.button("💾 Save Session", type="primary", use_container_width=True):
                 saved_file = save_session_state()
                 logger.info(f"Session saved to {saved_file}")
                 st.success(f"Session saved to {saved_file}")
 
         with col2:
+            # File uploader with improved styling
             uploaded_file = st.file_uploader(
                 "Load Session",
                 type="json",
-                help="Upload a previously saved session file",
+                help="Upload a previously saved session file (from output/sessions/)",
+                label_visibility="collapsed",
             )
             if uploaded_file:
+                # Define output directory for temporary storage
+                output_dir = "output"
+                os.makedirs(output_dir, exist_ok=True)
+                temp_file_path = os.path.join(output_dir, "temp_session.json")
+
                 # Save uploaded file temporarily
-                with open("temp_session.json", "wb") as f:
-                    f.write(uploaded_file.getvalue())
-                load_session_state("temp_session.json")
-                os.remove("temp_session.json")
-                logger.info("Session loaded from uploaded file")
-                st.success("Session loaded successfully!")
-                st.rerun()
+                try:
+                    with open(temp_file_path, "wb") as f:
+                        f.write(uploaded_file.getvalue())
+                    logger.info(
+                        f"Uploaded session saved temporarily to {temp_file_path}"
+                    )
+
+                    if load_session_state(temp_file_path):
+                        st.success("Session loaded successfully!")
+                        st.rerun()
+                    # No need for else here, load_session_state handles errors
+                except Exception as e:
+                    logger.error(f"Error handling uploaded session file: {e}")
+                    st.error(f"Failed to process uploaded session file: {e}")
+                finally:
+                    # Clean up the temporary file
+                    if os.path.exists(temp_file_path):
+                        try:
+                            os.remove(temp_file_path)
+                            logger.info(
+                                f"Removed temporary session file: {temp_file_path}"
+                            )
+                        except Exception as e:
+                            logger.error(
+                                f"Error removing temporary session file {temp_file_path}: {e}"
+                            )
 
         st.markdown("</div>", unsafe_allow_html=True)
         logger.debug("File management section display completed")
 
 
 def main():
-    # Header with Notion-like styling
-    st.markdown('<div class="main">', unsafe_allow_html=True)
-    st.title("📚 OpenAI Demo Notebook Generator")
+    # Clean, minimal header with Notion-like styling
     st.markdown(
         """
-    Create beautiful Python notebooks showcasing OpenAI API capabilities with ease.
-    Fill in the form below to get started.
-    """
+        <div style="padding: 1.5rem 0; margin-bottom: 2rem;">
+            <h1 style="margin-bottom: 0.5rem; font-size: 2.5rem; font-weight: 700; letter-spacing: -0.05em;">
+                📚 Notebook Generator
+            </h1>
+            <p style="color: rgba(55, 53, 47, 0.7); font-size: 1.1rem; margin-top: 0; font-weight: 400;">
+                Create beautiful Python notebooks showcasing OpenAI API capabilities with ease.
+            </p>
+        </div>
+    """,
+        unsafe_allow_html=True,
     )
 
     logger.info("Starting OpenAI Demo Notebook Generator")
@@ -658,40 +855,116 @@ def main():
 
     logger.info(f"Current step: {st.session_state.step}")
 
+    # Create a clean progress indicator
+    steps = ["Requirements", "Plan", "Notebook"]
+    current_step = st.session_state.step - 1  # 0-based index for steps list
+
+    cols = st.columns(len(steps))
+    for i, step in enumerate(steps):
+        with cols[i]:
+            if i < current_step:
+                # Completed step
+                st.markdown(
+                    f"""
+                    <div style="text-align: center; padding: 10px; color: #2F3437;">
+                        <div style="background: #2F3437; color: white; width: 28px; height: 28px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 8px; font-weight: 600;">✓</div>
+                        <div style="font-size: 0.85rem; font-weight: 500; opacity: 0.7;">{step}</div>
+                    </div>
+                """,
+                    unsafe_allow_html=True,
+                )
+            elif i == current_step:
+                # Current step
+                st.markdown(
+                    f"""
+                    <div style="text-align: center; padding: 10px; color: #2F3437;">
+                        <div style="background: #2F3437; color: white; width: 28px; height: 28px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 8px; font-weight: 600;">{i+1}</div>
+                        <div style="font-size: 0.85rem; font-weight: 600;">{step}</div>
+                    </div>
+                """,
+                    unsafe_allow_html=True,
+                )
+            else:
+                # Upcoming step
+                st.markdown(
+                    f"""
+                    <div style="text-align: center; padding: 10px; color: rgba(55, 53, 47, 0.4);">
+                        <div style="background: #F7F8F9; color: rgba(55, 53, 47, 0.4); width: 28px; height: 28px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 8px; border: 1px solid rgba(55, 53, 47, 0.1); font-weight: 600;">{i+1}</div>
+                        <div style="font-size: 0.85rem; font-weight: 500;">{step}</div>
+                    </div>
+                """,
+                    unsafe_allow_html=True,
+                )
+
+    # Add a subtle divider
+    st.markdown(
+        "<hr style='margin-top: 0; margin-bottom: 2rem; opacity: 0.6;'>",
+        unsafe_allow_html=True,
+    )
+
     # Step 1: Input Form
     if st.session_state.step == 1:
         logger.info("Displaying input form (Step 1)")
-        with st.form("notebook_requirements"):
-            st.subheader("Notebook Requirements")
 
+        # Use a Notion-like card for the form
+        st.markdown(
+            """
+            <div class="notion-card" style="padding: 28px; margin-bottom: 24px;">
+                <h2 style="margin-top: 0; color: #2F3437; font-size: 1.5rem; margin-bottom: 1.5rem;">Notebook Requirements</h2>
+            </div>
+        """,
+            unsafe_allow_html=True,
+        )
+
+        with st.form("notebook_requirements"):
             # Notebook Description
             description = st.text_area(
                 "Notebook Description",
                 help="Describe what you want to demonstrate in this notebook",
                 placeholder="Example: Create a notebook demonstrating how to use OpenAI's GPT-4 for text summarization",
                 key="description",
+                height=120,
             )
 
-            # Target Audience
-            audience = st.selectbox(
-                "Target Audience",
-                options=["Beginners", "Intermediate", "Advanced"],
-                help="Select the technical level of your target audience",
-                key="audience",
-            )
+            # Create two columns for audience and additional requirements
+            col1, col2 = st.columns([1, 1])
 
-            # Additional Requirements
-            additional_reqs = st.text_area(
-                "Additional Requirements (Optional)",
-                help="Any specific requirements or features you want to include",
-                placeholder="Example: Include error handling, Add visualization of results",
-                key="additional_reqs",
-            )
+            with col1:
+                # Target Audience
+                audience = st.selectbox(
+                    "Target Audience",
+                    options=[
+                        "Beginners",
+                        "Intermediate",
+                        "Advanced",
+                        "Experts",
+                        "Machine Learning Engineers",
+                        "Data Scientists",
+                        "Software Engineers",
+                        "Researchers",
+                        "Students",
+                    ],
+                    help="Select the technical level of your target audience",
+                    key="audience",
+                )
 
-            # Submit button
+            with col2:
+                # Additional Requirements
+                additional_reqs = st.text_area(
+                    "Additional Requirements (Optional)",
+                    help="Any specific requirements or features you want to include",
+                    placeholder="Example: Include error handling, Add visualization of results",
+                    key="additional_reqs",
+                    height=124,
+                )
+
+            # Submit button with centered styling
+            st.markdown("<div style='text-align: center;'>", unsafe_allow_html=True)
             submitted = st.form_submit_button("Generate Plan")
+            st.markdown("</div>", unsafe_allow_html=True)
 
             if submitted:
+                # Rest of the submitted logic remains unchanged
                 logger.info("Form submitted - validating inputs")
                 # Validate inputs
                 if not description:
@@ -849,6 +1122,7 @@ def main():
                             "additional_requirements", []
                         ),
                     )
+                    print("result", result)
 
                     # Update progress
                     progress_bar.progress(60)

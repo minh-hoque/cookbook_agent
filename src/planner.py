@@ -414,6 +414,8 @@ class PlannerLLM:
 
         # Initialize messages as List[Dict[str, Any]] to handle all message types
         messages: List[Dict[str, Any]] = []
+        # Initialize api_messages to be used in the API call
+        api_messages: List[ChatCompletionMessageParam] = []
 
         if previous_messages:
             messages = previous_messages
@@ -453,7 +455,18 @@ class PlannerLLM:
                         tool_call_id = tool_call.get("id")
 
                         if tool_call_id:
-                            # Add the tool response message
+                            # Remove any existing placeholder tool response
+                            messages = [
+                                msg
+                                for msg in messages
+                                if not (
+                                    isinstance(msg, dict)
+                                    and msg.get("role") == "tool"
+                                    and msg.get("tool_call_id") == tool_call_id
+                                )
+                            ]
+
+                            # Add the tool response message with actual answers
                             messages.append(
                                 {
                                     "role": "tool",
@@ -490,28 +503,37 @@ class PlannerLLM:
                                 "Added tool response and new user prompt with clarifications"
                             )
 
-        try:
-            # Convert messages to the format expected by the OpenAI API
-            api_messages = []
-            for msg in messages:
-                if not isinstance(msg, dict):
-                    continue
+                            # Update stored messages
+                            self._current_messages = messages
 
-                role = msg.get("role", "")
-                content = msg.get("content", "")
+        # Convert messages to API format
+        api_messages = []
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
 
-                api_msg: Dict[str, Any] = {"role": role, "content": content}
+            role = msg.get("role", "")
+            content = msg.get("content", "")
 
+            # Handle tool response messages separately
+            if role == "tool":
+                api_msg: ChatCompletionMessageParam = {
+                    "role": "tool",
+                    "content": content,
+                    "tool_call_id": msg["tool_call_id"],
+                }
+            else:
+                api_msg: ChatCompletionMessageParam = {
+                    "role": role,
+                    "content": content,
+                }
                 # Add tool_calls if present
                 if "tool_calls" in msg:
                     api_msg["tool_calls"] = msg["tool_calls"]
 
-                # Add tool_call_id if present
-                if "tool_call_id" in msg:
-                    api_msg["tool_call_id"] = msg["tool_call_id"]
+            api_messages.append(api_msg)
 
-                api_messages.append(api_msg)
-
+        try:
             # Make the API call with tools
             logger.info("Making API call with tools...")
             response = self.client.chat.completions.create(
@@ -553,6 +575,16 @@ class PlannerLLM:
                         ],
                     }
                     messages.append(new_message)
+
+                    # Add a placeholder tool response message to satisfy the API requirement
+                    tool_response_message: Dict[str, Any] = {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": json.dumps(
+                            {}
+                        ),  # Empty response since we're waiting for user input
+                    }
+                    messages.append(tool_response_message)
 
                     # Update stored messages
                     self._current_messages = messages

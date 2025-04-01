@@ -1,0 +1,16 @@
+[theme]
+primaryColor = "#2F3437"  # Dark gray for primary elements
+backgroundColor = "#FFFFFF"  # White background
+secondaryBackgroundColor = "#F7F8F9"  # Light gray for secondary elements
+textColor = "#000000"  # Black for text
+font = "sans serif"
+
+[server]
+enableCORS = false
+enableXsrfProtection = false
+
+[browser]
+gatherUsageStats = false
+
+[ui]
+hideSidebarNav = true 
