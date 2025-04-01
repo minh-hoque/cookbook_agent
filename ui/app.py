@@ -856,6 +856,12 @@ def main():
     if "planner_state" not in st.session_state:
         st.session_state.planner_state = None
         logger.debug("Initialized planner_state")
+    if "enable_search" not in st.session_state:
+        st.session_state.enable_search = True
+        logger.debug("Initialized enable_search")
+    if "enable_final_revision" not in st.session_state:
+        st.session_state.enable_final_revision = True
+        logger.debug("Initialized enable_final_revision")
 
     logger.info(f"Current step: {st.session_state.step}")
 
@@ -910,12 +916,27 @@ def main():
     if st.session_state.step == 1:
         logger.info("Displaying input form (Step 1)")
 
-        # Use a Notion-like card for the form
+        # Add custom CSS for the card style
         st.markdown(
             """
-            <div class="notion-card" style="padding: 28px; margin-bottom: 24px; background: white; border: 1px solid rgba(55, 53, 47, 0.1); border-radius: 4px; box-shadow: rgba(15, 15, 15, 0.03) 0px 1px 3px;">
-                <h2 style="margin-top: 0; color: #2F3437; font-size: 1.5rem; margin-bottom: 1.5rem;">Notebook Requirements</h2>
-            """,
+        <style>
+        .requirements-card {
+            background: white;
+            border: 1px solid rgba(55, 53, 47, 0.1);
+            border-radius: 4px;
+            box-shadow: rgba(15, 15, 15, 0.03) 0px 1px 3px;
+            padding: 28px;
+            margin-bottom: 24px;
+        }
+        </style>
+        """,
+            unsafe_allow_html=True,
+        )
+
+        # Create a container with card styling that wraps everything
+        st.markdown('<div class="requirements-card">', unsafe_allow_html=True)
+        st.markdown(
+            '<h2 style="margin-top: 0; color: #2F3437; font-size: 1.5rem; margin-bottom: 1.5rem;">Notebook Requirements</h2>',
             unsafe_allow_html=True,
         )
 
@@ -961,6 +982,31 @@ def main():
                     height=124,
                 )
 
+            # Add advanced options for writer agent
+            st.markdown(
+                "<hr style='margin: 20px 0 15px 0; opacity: 0.3;'>",
+                unsafe_allow_html=True,
+            )
+            st.markdown("### Advanced Options", unsafe_allow_html=True)
+
+            col3, col4 = st.columns([1, 1])
+
+            with col3:
+                enable_search = st.checkbox(
+                    "Enable Search",
+                    value=st.session_state.enable_search,
+                    key="enable_search_checkbox",
+                    help="Allow the writer agent to search for information online when generating content",
+                )
+
+            with col4:
+                enable_revision = st.checkbox(
+                    "Enable Final Revision",
+                    value=st.session_state.enable_final_revision,
+                    key="enable_revision_checkbox",
+                    help="Enable the writer agent to critique and revise the generated notebook",
+                )
+
             # Submit button with centered styling
             st.markdown("<div style='text-align: center;'>", unsafe_allow_html=True)
             submitted = st.form_submit_button("Generate Plan")
@@ -986,6 +1032,13 @@ def main():
                     ],
                 }
                 logger.info("User requirements stored in session state")
+
+                # Store search and revision settings
+                st.session_state.enable_search = enable_search
+                st.session_state.enable_final_revision = enable_revision
+                logger.info(
+                    f"Advanced settings updated: search={enable_search}, revision={enable_revision}"
+                )
 
                 # Initialize planner if not already initialized
                 if not st.session_state.planner_state:
@@ -1057,7 +1110,7 @@ def main():
                     st.session_state.planner_state = None
                     return
 
-        # Close the notion-card div after the form
+        # Close the requirements-card div
         st.markdown("</div>", unsafe_allow_html=True)
 
     # Step 1.5: Clarifications (if needed)
@@ -1108,8 +1161,8 @@ def main():
                     writer = WriterAgent(
                         model="gpt-4o",
                         max_retries=3,
-                        search_enabled=True,
-                        final_critique_enabled=True,
+                        search_enabled=st.session_state.enable_search,
+                        final_critique_enabled=st.session_state.enable_final_revision,
                     )
 
                     # Update progress

@@ -939,10 +939,10 @@ class WriterAgent:
             str: Properly formatted markdown content.
         """
         # Add line break after headers
-        content = re.sub(r"(#+.*?)(\S)", r"\1\n\2", content)
+        # content = re.sub(r"(#+.*?)(\S)", r"\1\n\2", content)
 
         # Add line breaks between sections
-        content = re.sub(r"(\n#{1,6}.*?\n)", r"\n\1", content)
+        # content = re.sub(r"(\n#{1,6}.*?\n)", r"\n\1", content)
 
         # Ensure proper spacing around lists
         content = re.sub(r"(\n[-*].*?)(\n[^-*\n])", r"\1\n\2", content)
