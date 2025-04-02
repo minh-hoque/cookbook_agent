@@ -108,13 +108,6 @@ The project includes a user-friendly Streamlit interface for a more interactive 
 streamlit run ui/app.py
 ```
 
-The UI provides the following features:
-- Create and edit notebook plans with an intuitive interface
-- Visualize the notebook structure in real-time
-- Generate content with progress tracking
-- Preview the generated notebooks in various formats
-- Save and load your projects
-- Export notebooks in multiple formats (Markdown, Jupyter, Python)
 
 ### Generate Notebook Content from Plan
 
