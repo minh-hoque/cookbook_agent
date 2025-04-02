@@ -302,7 +302,7 @@ def main():
     # Search for information about the notebook topic
     notebook_description = user_requirements.get("notebook_description", "")
     search_results = search_for_topic_info(
-        notebook_description, search_context_size="low"
+        notebook_description, search_context_size="medium"
     )
 
     # Create notebook plan
@@ -365,6 +365,7 @@ def main():
         additional_requirements=additional_requirements,
         model=args.model,
         output_dir=output_dir,
+        search_context_size="medium",
     )
 
 
