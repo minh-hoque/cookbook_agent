@@ -30,6 +30,7 @@ from src.format.plan_format import (
 from src.format.notebook_utils import (
     save_notebook_content,
     writer_output_to_notebook,
+    save_notebook_versions,
 )
 
 # Get a logger for this module
@@ -222,56 +223,59 @@ def generate_notebook_content(
             original_content = None
             final_critique = None
 
-        # 1. Save as JSON files and markdown
-        content_list = []
-        if revised_content:
-            for content in revised_content:
-                if hasattr(content, "model_dump"):
-                    content_list.append(content.model_dump())
-                else:
-                    # Handle the case where content might not be a pydantic model
-                    logger.warning(
-                        "Content does not have model_dump method, using dict conversion"
-                    )
-                    content_list.append(dict(content))
-
-        markdown_filepath = save_notebook_content(content_list, output_dir)
-
-        # 2. Save as Jupyter notebook (.ipynb)
-        notebook_title = notebook_plan.title
-        notebook_filepath = os.path.join(
-            output_dir, f"{notebook_title.replace(' ', '_')}.ipynb"
-        )
-        jupyter_success = writer_output_to_notebook(
-            revised_content, notebook_filepath, notebook_title=notebook_title
-        )
-
-        if markdown_filepath:
-            logger.info(
-                f"Notebook content generated successfully and saved to {output_dir} directory"
+        # Save all versions using save_notebook_versions
+        if original_content and final_critique:
+            results = save_notebook_versions(
+                original_content=original_content,
+                revised_content=revised_content,
+                critique=final_critique,
+                output_dir=output_dir,
+                notebook_title=notebook_plan.title,
+                formats=["ipynb", "md"],
             )
-            print(
-                f"\nNotebook content generated successfully and saved to {output_dir} directory"
-            )
-            print(f"Markdown file: {markdown_filepath}")
 
-            if jupyter_success:
-                print(f"Jupyter Notebook: {notebook_filepath}")
-
-            return True
+            if results:
+                logger.info(
+                    f"Notebook content generated successfully and saved to {output_dir} directory"
+                )
+                print(
+                    f"\nNotebook content generated successfully and saved to {output_dir} directory"
+                )
+                print(f"Files saved:")
+                for format_name, filepath in results.items():
+                    print(f"- {format_name}: {filepath}")
+                return True
+            else:
+                logger.warning("Failed to save notebook versions")
+                return False
         else:
-            logger.warning("Failed to save markdown content")
-            return jupyter_success  # Return True if at least Jupyter was successful
+            # Fallback to saving just the revised content if we don't have original/critique
+            markdown_filepath = save_notebook_content(
+                [content.model_dump() for content in revised_content], output_dir
+            )
+            if markdown_filepath:
+                logger.info(
+                    f"Notebook content generated successfully and saved to {output_dir} directory"
+                )
+                print(
+                    f"\nNotebook content generated successfully and saved to {output_dir} directory"
+                )
+                print(f"Markdown file: {markdown_filepath}")
+                return True
+            else:
+                logger.warning("Failed to save markdown content")
+                return False
+
     except ImportError:
         logger.error("WriterAgent or required dependencies not available")
         print(
             "Error: WriterAgent or required dependencies are not available. Please check your installation."
         )
+        return False
     except Exception as e:
         logger.error(f"Error generating notebook content: {str(e)}")
         print(f"Error generating notebook content: {str(e)}")
-
-    return False
+        return False
 
 
 def main():
