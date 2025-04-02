@@ -41,6 +41,8 @@ from src.format.notebook_utils import (
     save_notebook_versions,
     writer_output_to_notebook,
 )
+from src.searcher import search_with_openai, format_openai_search_results
+from openai import OpenAI
 
 # Configure logging
 configure_logging(debug_level=DebugLevel.DEBUG)
@@ -542,6 +544,7 @@ def handle_clarifications():
                                 requirements=st.session_state.user_requirements,
                                 previous_messages=st.session_state.previous_messages,
                                 clarification_answers=answers,
+                                search_results=st.session_state.initial_search_results,
                             )
 
                             # Check if we need more clarifications or have a plan
@@ -614,6 +617,8 @@ def save_session_state():
         "content_critique": getattr(st.session_state, "content_critique", None),
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "all_clarifications": getattr(st.session_state, "all_clarifications", {}),
+        "saved_plan_path": getattr(st.session_state, "saved_plan_path", None),
+        "saved_plan_filename": getattr(st.session_state, "saved_plan_filename", None),
     }
 
     # Create output/sessions directory if it doesn't exist
@@ -690,6 +695,22 @@ def load_session_state(file_path: str):
         if "all_clarifications" in session_data:
             st.session_state.all_clarifications = session_data["all_clarifications"]
 
+        # Load saved plan path and filename if they exist
+        if "saved_plan_path" in session_data and session_data["saved_plan_path"]:
+            st.session_state.saved_plan_path = session_data["saved_plan_path"]
+            # Verify the file exists
+            if not os.path.exists(st.session_state.saved_plan_path):
+                logger.warning(
+                    f"Saved plan file not found at {st.session_state.saved_plan_path}"
+                )
+                st.session_state.saved_plan_path = None
+
+        if (
+            "saved_plan_filename" in session_data
+            and session_data["saved_plan_filename"]
+        ):
+            st.session_state.saved_plan_filename = session_data["saved_plan_filename"]
+
         # Determine the appropriate step based on what's available
         if session_data.get("notebook_content"):
             # If we have content, we're at step 3
@@ -760,39 +781,33 @@ def display_file_management():
 
         with col1:
             if st.session_state.notebook_plan:
-                # Define output directory and ensure it exists
-                output_dir = "output"
-                os.makedirs(output_dir, exist_ok=True)
-
-                # Save plan to file inside output directory
-                plan_file_name = (
-                    f"{st.session_state.notebook_plan.title.replace(' ', '_')}_plan.md"
-                )
-                plan_file_path = os.path.join(output_dir, plan_file_name)
-
-                try:
-                    with open(plan_file_path, "w") as f:
-                        f.write(format_notebook_plan(st.session_state.notebook_plan))
-                    logger.debug(
-                        f"Plan temporarily saved to {plan_file_path} for download"
-                    )
-
-                    with open(plan_file_path, "r") as f:
-                        st.download_button(
-                            "📄 Download Plan",
-                            f.read(),
-                            file_name=plan_file_name,  # Use only filename for download button
-                            mime="text/markdown",
-                            help="Download the notebook plan in Markdown format",
-                            use_container_width=True,
+                # Check if we have a saved plan path
+                if hasattr(st.session_state, "saved_plan_path") and os.path.exists(
+                    st.session_state.saved_plan_path
+                ):
+                    # Use the existing saved plan file
+                    try:
+                        with open(st.session_state.saved_plan_path, "r") as f:
+                            st.download_button(
+                                "📄 Download Plan",
+                                f.read(),
+                                file_name=st.session_state.saved_plan_filename,
+                                mime="text/markdown",
+                                help="Download the notebook plan in Markdown format",
+                                use_container_width=True,
+                            )
+                        logger.debug(
+                            f"Using saved plan file from {st.session_state.saved_plan_path}"
                         )
-                    # Clean up the temporary file after creating the button
-                    os.remove(plan_file_path)
-                    logger.debug(f"Removed temporary plan file: {plan_file_path}")
-
-                except Exception as e:
-                    logger.error(f"Error preparing plan for download: {e}")
-                    st.error("Could not prepare plan for download.")
+                    except Exception as e:
+                        logger.error(f"Error reading saved plan file: {e}")
+                        st.error("Could not prepare plan for download.")
+                else:
+                    # If no saved plan exists (user might be at plan step but hasn't gone forward yet)
+                    # Inform the user they need to proceed to generate notebook first
+                    st.info(
+                        "Proceed to 'Generate Notebook' to save and download the plan."
+                    )
 
         with col2:
             if st.session_state.notebook_content and st.session_state.notebook_plan:
@@ -952,6 +967,15 @@ def main():
     if "enable_final_revision" not in st.session_state:
         st.session_state.enable_final_revision = True
         logger.debug("Initialized enable_final_revision")
+    if "saved_plan_path" not in st.session_state:
+        st.session_state.saved_plan_path = None
+        logger.debug("Initialized saved_plan_path")
+    if "saved_plan_filename" not in st.session_state:
+        st.session_state.saved_plan_filename = None
+        logger.debug("Initialized saved_plan_filename")
+    if "search_context_level" not in st.session_state:
+        st.session_state.search_context_level = "low"  # Default to low
+        logger.debug("Initialized search_context_level")
 
     logger.info(f"Current step: {st.session_state.step}")
 
@@ -1080,6 +1104,17 @@ def main():
                     help="Enable the writer agent to critique and revise the generated notebook",
                 )
 
+            # Add dropdown for search context level
+            search_context_level = st.selectbox(
+                "Search Context Level",
+                options=["low", "medium", "high"],
+                index=["low", "medium", "high"].index(
+                    st.session_state.search_context_level
+                ),  # Set current value
+                key="search_context_level_select",
+                help="Controls the amount of context provided by the search results (low=concise, medium=balanced, high=detailed)",
+            )
+
             # Submit button with centered styling
             st.markdown("<div style='text-align: center;'>", unsafe_allow_html=True)
             submitted = st.form_submit_button("Generate Plan")
@@ -1109,8 +1144,9 @@ def main():
                 # Store search and revision settings
                 st.session_state.enable_search = enable_search
                 st.session_state.enable_final_revision = enable_revision
+                st.session_state.search_context_level = search_context_level
                 logger.info(
-                    f"Advanced settings updated: search={enable_search}, revision={enable_revision}"
+                    f"Advanced settings updated: search={enable_search}, revision={enable_revision}, context={search_context_level}"
                 )
 
                 # Initialize planner if not already initialized
@@ -1123,7 +1159,45 @@ def main():
                     planner = st.session_state.planner_state
 
                 try:
-                    with st.spinner("Analyzing requirements and generating plan..."):
+                    with st.spinner("Performing initial search and generating plan..."):
+                        logger.info("Starting initial search based on description")
+
+                        # --- Perform Initial Search ---
+                        search_results_formatted = "No initial search results."
+                        try:
+                            # Initialize OpenAI client for search
+                            search_client = OpenAI()
+                            logger.debug("Initialized OpenAI client for search")
+
+                            # Perform search
+                            search_results = search_with_openai(
+                                search_query=st.session_state.user_requirements[
+                                    "notebook_description"
+                                ],
+                                model="gpt-4o",  # Or use a dedicated search model if preferred
+                                search_context_size=st.session_state.search_context_level,
+                                client=search_client,
+                            )
+                            logger.info("Initial search completed")
+
+                            # Format results
+                            search_results_formatted = format_openai_search_results(
+                                search_results
+                            )
+                            logger.debug("Formatted initial search results")
+
+                        except Exception as search_error:
+                            logger.error(f"Error during initial search: {search_error}")
+                            st.warning(
+                                f"Could not perform initial search: {search_error}"
+                            )
+                        # --- End Initial Search ---
+
+                        # Store search results in session state (optional, but good for traceability)
+                        st.session_state.initial_search_results = (
+                            search_results_formatted
+                        )
+
                         logger.info("Starting plan generation")
                         # Check if we need to handle clarifications
                         if st.session_state.needs_clarification:
@@ -1148,6 +1222,7 @@ def main():
                                 requirements=st.session_state.user_requirements,
                                 previous_messages=st.session_state.previous_messages,
                                 clarification_answers=clarification_answers,
+                                search_results=search_results_formatted,
                             )
 
                             # Check if the result is a list of questions or a plan
@@ -1204,8 +1279,11 @@ def main():
             st.session_state.notebook_content = None
             if hasattr(st.session_state, "content_critique"):
                 delattr(st.session_state, "content_critique")
+            # Reset saved plan path
+            st.session_state.saved_plan_path = None
+            st.session_state.saved_plan_filename = None
             logger.debug(
-                "Reset notebook plan and content when returning to requirements"
+                "Reset notebook plan, content, and saved plan path when returning to requirements"
             )
             st.rerun()
 
@@ -1217,6 +1295,28 @@ def main():
         # Continue button
         if st.button("Generate Notebook"):
             logger.info("User clicked generate notebook")
+
+            # Save the plan to a file for later use in file_management
+            if st.session_state.notebook_plan:
+                output_dir = "output"
+                os.makedirs(output_dir, exist_ok=True)
+
+                plan_file_name = (
+                    f"{st.session_state.notebook_plan.title.replace(' ', '_')}_plan.md"
+                )
+                plan_file_path = os.path.join(output_dir, plan_file_name)
+
+                try:
+                    with open(plan_file_path, "w") as f:
+                        f.write(format_notebook_plan(st.session_state.notebook_plan))
+                    logger.info(f"Plan saved to {plan_file_path}")
+
+                    # Store paths in session state for use in display_file_management
+                    st.session_state.saved_plan_path = plan_file_path
+                    st.session_state.saved_plan_filename = plan_file_name
+                except Exception as e:
+                    logger.error(f"Error saving plan: {e}")
+
             st.session_state.step = 3
             st.rerun()
 
@@ -1250,6 +1350,7 @@ def main():
                         max_retries=3,
                         search_enabled=st.session_state.enable_search,
                         final_critique_enabled=st.session_state.enable_final_revision,
+                        search_context_size=st.session_state.search_context_level,
                     )
 
                     # Update progress
