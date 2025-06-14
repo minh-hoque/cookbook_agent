@@ -53,7 +53,7 @@ def format_notebook_plan(plan: NotebookPlanModel) -> str:
 
 
 # Custom implementation of get_clarifications for testing
-def test_get_clarifications(questions: List[str]) -> Dict[str, str]:
+def mock_get_clarifications(questions: List[str]) -> Dict[str, str]:
     """
     Automated test version of get_clarifications that returns pre-defined answers.
 
@@ -200,7 +200,7 @@ print(completion.choices[0].message.content)
     print("Planning the notebook...")
     notebook_plan = planner.plan_notebook(
         user_requirements,
-        clarification_callback=test_get_clarifications,
+        clarification_callback=mock_get_clarifications,
         search_results=formatted_search_results,
     )
 
