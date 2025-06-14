@@ -82,11 +82,11 @@ class TestPlanFormatting(unittest.TestCase):
         try:
             # Save the plan to the temporary file
             save_plan_to_file(self.sample_plan, temp_filename)
+            # Confirm that the file was created
+            self.assertTrue(os.path.exists(temp_filename))
 
             # Parse the plan back from the file
             parsed_plan = parse_markdown_to_plan(temp_filename)
-
-            print(f"Parsed plan: {parsed_plan}")
 
             # Check that the parsed plan matches the original
             self.assertEqual(parsed_plan.title, self.sample_plan.title)
